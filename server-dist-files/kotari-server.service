@@ -1,0 +1,19 @@
+# Service systemd pour kotari-server.
+# À adapter : User et le chemin du dossier hébergé (dernier argument de ExecStart).
+[Unit]
+Description=Kotari Serveur
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/kotari-server
+ExecStart=/usr/bin/env node /opt/kotari-server/kotari-server.mjs start /home/pi/table-partagee
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
