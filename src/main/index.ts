@@ -1,10 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { ProjectStore } from '@shared/fsproject'
 import type { DocMeta, TypeDef } from '@shared/model'
 import { isDocMeta, isSafeId, isTypeDef } from '@shared/model'
 import { TEMPLATES } from '@shared/templates'
+import { atomicWrite } from '@shared/fsproject'
+import { isImageHash } from '@shared/images'
+import { searchDocs } from '@shared/search'
 
 // Le rendu ne voit jamais de chemin : seul le main connaît le dossier ouvert,
 // et toutes les écritures passent par ProjectStore (identifiants validés).
@@ -37,7 +40,97 @@ async function isEmptyDir(dir: string): Promise<boolean> {
   }
 }
 
+// ---- Serveurs récents : mot de passe chiffré avec le compte Windows (safeStorage) ----
+
+interface SavedServer {
+  id: string
+  host: string
+  port: number
+  name: string
+  password?: string
+  lastUsed: number
+}
+
+const serversFile = () => path.join(app.getPath('userData'), 'servers.json')
+
+async function readServers(): Promise<SavedServer[]> {
+  try {
+    const list = JSON.parse(await fs.readFile(serversFile(), 'utf8'))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+async function writeServers(list: SavedServer[]) {
+  await fs.mkdir(path.dirname(serversFile()), { recursive: true })
+  await atomicWrite(serversFile(), JSON.stringify(list, null, 2))
+}
+
 function registerIpc() {
+  ipcMain.handle('servers:list', async () =>
+    (await readServers())
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .map(({ password, ...rest }) => ({ ...rest, hasPassword: !!password }))
+  )
+
+  ipcMain.handle('servers:remember', async (_e, entry: unknown, password: unknown) => {
+    const e = entry as Partial<SavedServer>
+    if (typeof e?.host !== 'string' || typeof e.port !== 'number' || typeof e.name !== 'string') throw new Error('Serveur invalide.')
+    const list = await readServers()
+    const id = `${e.host}:${e.port}`
+    const prev = list.find((x) => x.id === id)
+    let enc = prev?.password
+    if (typeof password === 'string') {
+      enc = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(password).toString('base64') : undefined
+    } else if (password === null) enc = undefined
+    const next: SavedServer = { id, host: e.host, port: e.port, name: e.name, password: enc, lastUsed: Date.now() }
+    await writeServers([next, ...list.filter((x) => x.id !== id)].slice(0, 10))
+  })
+
+  ipcMain.handle('servers:password', async (_e, id: unknown) => {
+    const s = (await readServers()).find((x) => x.id === id)
+    if (!s?.password || !safeStorage.isEncryptionAvailable()) return null
+    try {
+      return safeStorage.decryptString(Buffer.from(s.password, 'base64'))
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('servers:forget', async (_e, id: unknown) => {
+    await writeServers((await readServers()).filter((x) => x.id !== id))
+  })
+
+  ipcMain.handle('image:get', async (_e, hash: unknown) => {
+    if (!isImageHash(hash)) return null
+    return requireStore().readImage(hash)
+  })
+
+  ipcMain.handle('image:put', async (_e, hash: unknown, data: unknown) => {
+    if (!isImageHash(hash) || !(data instanceof Uint8Array)) throw new Error('Image invalide.')
+    await requireStore().writeImage(hash, data)
+  })
+
+  ipcMain.handle('image:missing', async (_e, hashes: unknown) => {
+    if (!Array.isArray(hashes)) return []
+    const s = requireStore()
+    const out: string[] = []
+    for (const h of hashes) if (isImageHash(h) && !(await s.hasImage(h))) out.push(h)
+    return out
+  })
+
+  ipcMain.handle('project:search', async (_e, query: unknown, ids: unknown) => {
+    if (typeof query !== 'string' || !query.trim()) return []
+    const s = requireStore()
+    let docs = await s.listDocs()
+    if (Array.isArray(ids)) {
+      const want = new Set(ids)
+      docs = docs.filter((d) => want.has(d.id))
+    }
+    return searchDocs(docs, await s.listTypes(), (id) => s.readContent(id), query.slice(0, 200))
+  })
+
   ipcMain.handle('project:create', async (_e, name: unknown, withTemplates: unknown) => {
     if (typeof name !== 'string' || !name.trim()) throw new Error('Nom de projet manquant.')
     const res = await dialog.showOpenDialog(win!, {

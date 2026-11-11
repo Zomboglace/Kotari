@@ -11,6 +11,10 @@ import { ProjectStore } from '@shared/fsproject'
 import { newId, subtree } from '@shared/model'
 import { TEMPLATES } from '@shared/templates'
 import { hashPassword } from '../src/server/password'
+import { imageHash } from '@shared/images'
+import { ensureFields, newListItem, collectImages } from '@shared/content'
+import { collectTexts } from '@shared/search'
+import type { TypeDef } from '@shared/model'
 import { startServer } from '../src/server/server'
 import { ServerLibrary } from '../src/renderer/src/lib/serverLibrary'
 
@@ -26,7 +30,51 @@ async function until(cond: () => boolean, what: string, ms = 5000) {
 let step = 0
 const ok = (msg: string) => console.log(`  ✓ ${++step}. ${msg}`)
 
+function unitTests() {
+  // Listes imbriquées + conversion de genre
+  const t1: TypeDef = {
+    id: 't1', name: 'T', order: 1,
+    fields: [
+      { id: 'a', name: 'A', kind: 'text' },
+      { id: 'l', name: 'L', kind: 'list', subfields: [
+        { id: 'n', name: 'N', kind: 'text' },
+        { id: 'sub', name: 'Sub', kind: 'list', subfields: [{ id: 'x', name: 'X', kind: 'text' }] }
+      ] }
+    ]
+  }
+  const d = new Y.Doc()
+  ensureFields(d, t1)
+  const f = d.getMap('fields')
+  ;(f.get('a') as Y.Text).insert(0, '17')
+  const item = newListItem(t1.fields[1].subfields!)
+  ;(f.get('l') as Y.Array<Y.Map<unknown>>).push([item])
+  const inner = newListItem(t1.fields[1].subfields![1].subfields!)
+  ;(item.get('sub') as Y.Array<Y.Map<unknown>>).push([inner])
+  ;(inner.get('x') as Y.Text).insert(0, 'profond')
+  const texts = collectTexts(d, t1)
+  assert.ok(texts.some((e) => e.text === 'profond' && e.label === 'L 1 › Sub 1 › X'))
+  ok('listes imbriquées sur trois niveaux, indexées par la recherche')
+
+  const t2: TypeDef = { ...t1, fields: [{ ...t1.fields[0], kind: 'ability' }, t1.fields[1]] }
+  ensureFields(d, t2)
+  assert.equal(f.get('a'), 17)
+  const t3: TypeDef = { ...t1, fields: [{ ...t1.fields[0], kind: 'gauge' }, t1.fields[1]] }
+  ensureFields(d, t3)
+  assert.equal((f.get('a') as Y.Map<unknown>).get('cur'), 17)
+  const t4: TypeDef = { ...t1, fields: [{ ...t1.fields[0], kind: 'richtext' }, t1.fields[1]] }
+  ensureFields(d, t4)
+  assert.ok(collectTexts(d, t4).some((e) => e.path === 'a' && e.text === '17 / '))
+  ok('changement de genre : texte → caractéristique → jauge → texte riche, valeur conservée')
+
+  const t5: TypeDef = { ...t1, fields: [{ id: 'img', name: 'I', kind: 'image' }] }
+  ensureFields(d, t5)
+  ;(f.get('img') as Y.Map<unknown>).set('img', 'a'.repeat(40))
+  assert.deepEqual(collectImages(Y.encodeStateAsUpdate(d)), ['a'.repeat(40)])
+  ok('images référencées retrouvées pour la copie')
+}
+
 async function main() {
+  unitTests()
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kotari-test-'))
   await ProjectStore.init(dir, 'Test', TEMPLATES)
   const srv = await startServer({ dir, port: 0, passwordHash: await hashPassword('secret123'), log: () => {} })
@@ -69,8 +117,8 @@ async function main() {
   p.insert(0, [new Y.XmlText('Rôdeur du Nord.')])
   hist.insert(0, [p])
   await until(() => (db.ydoc.getMap('fields').get('histoire') as Y.XmlFragment).toString().includes('Rôdeur'), 'texte riche')
-  da.ydoc.getMap('fields').set('pv', 42)
-  await until(() => db.ydoc.getMap('fields').get('pv') === 42, 'nombre')
+  da.ydoc.getMap('fields').set('niveau', 42)
+  await until(() => db.ydoc.getMap('fields').get('niveau') === 42, 'nombre')
   ok('texte riche et nombre synchronisés')
 
   b.updateMeta(pid, { title: 'Aragorn II' })
@@ -97,6 +145,23 @@ async function main() {
   assert.equal(plan2.newTypes.length, 1)
   assert.equal(plan2.newTypes[0].name, 'Personnage (2)')
   ok('type en conflit dupliqué en « Personnage (2) »')
+
+  // Recherche côté serveur (titre + texte riche, sans accents)
+  const hits = await b.search('rodeur')
+  assert.ok(hits.some((h) => h.docId === pid && h.path === 'histoire'))
+  const scoped = await b.search('aragorn', [iid])
+  assert.equal(scoped.length, 0)
+  ok('recherche serveur (accents ignorés, limitée à des fiches)')
+
+  // Images : envoi, vérification d'empreinte, lecture
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2, 3, 4])
+  const hash = await imageHash(png)
+  assert.deepEqual(await a.missingImages([hash]), [hash])
+  await a.putImage(hash, png)
+  assert.deepEqual(await b.missingImages([hash]), [])
+  assert.deepEqual([...(await b.getImage(hash))!], [...png])
+  await assert.rejects(a.putImage('0'.repeat(40), png), /Empreinte/)
+  ok('images envoyées et relues, empreinte vérifiée')
 
   // Persistance
   await sleep(1500)

@@ -6,7 +6,9 @@
 //   documents/<id>.json    méta (titre, type, parent, ordre)
 //   documents/<id>.yjs     contenu Yjs
 
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
+import { imageMime, isImageHash, MAX_IMAGE_BYTES } from './images'
 import path from 'node:path'
 import type { DocMeta, ProjectInfo, TypeDef } from './model'
 import { FORMAT_VERSION, isDocMeta, isSafeId, isTypeDef, pickMeta } from './model'
@@ -144,6 +146,37 @@ export class ProjectStore {
 
   async writeContent(id: string, data: Uint8Array): Promise<void> {
     await atomicWrite(this.p('documents', `${checkId(id)}.yjs`), data)
+  }
+
+  async readImage(hash: string): Promise<Uint8Array | null> {
+    if (!isImageHash(hash)) return null
+    try {
+      return new Uint8Array(await fs.readFile(this.p('images', hash)))
+    } catch {
+      return null
+    }
+  }
+
+  async hasImage(hash: string): Promise<boolean> {
+    if (!isImageHash(hash)) return false
+    try {
+      await fs.access(this.p('images', hash))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Vérifie l'empreinte et le format avant d'écrire. */
+  async writeImage(hash: string, data: Uint8Array): Promise<void> {
+    if (!isImageHash(hash)) throw new Error('Empreinte invalide.')
+    if (data.length > MAX_IMAGE_BYTES) throw new Error('Image trop lourde (15 Mo maximum).')
+    if (!imageMime(data)) throw new Error('Format non pris en charge (PNG, JPEG, GIF ou WebP).')
+    const real = createHash('sha256').update(data).digest('hex').slice(0, 40)
+    if (real !== hash) throw new Error('Empreinte incorrecte.')
+    if (await this.hasImage(hash)) return
+    await fs.mkdir(this.p('images'), { recursive: true })
+    await atomicWrite(this.p('images', hash), data)
   }
 
   async deleteDoc(id: string): Promise<void> {

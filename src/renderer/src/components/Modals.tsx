@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { TypeDef } from '@shared/model'
 import { loadPref, savePref } from '../lib/hooks'
 import type { ConnectOptions } from '../lib/serverLibrary'
+import { isDark, PALETTES, type ThemeMode, type ThemeSettings } from '../lib/theme'
 
 export function Modal({
   title,
@@ -149,20 +150,30 @@ interface SavedConnection {
   name: string
 }
 
+export interface ConnectInitial {
+  host: string
+  port: number
+  name: string
+  error?: string
+}
+
 export function ConnectModal({
+  initial,
   onConnect,
   onClose
 }: {
-  onConnect: (opts: ConnectOptions) => Promise<void>
+  initial?: ConnectInitial
+  onConnect: (opts: ConnectOptions, rememberPassword: boolean) => Promise<void>
   onClose: () => void
 }) {
   const saved = loadPref<SavedConnection>('kotari.connection', { host: '', port: '4321', name: '' })
-  const [host, setHost] = useState(saved.host)
-  const [port, setPort] = useState(saved.port)
+  const [host, setHost] = useState(initial?.host ?? saved.host)
+  const [port, setPort] = useState(initial ? String(initial.port) : saved.port)
   const [password, setPassword] = useState('')
-  const [name, setName] = useState(saved.name)
+  const [name, setName] = useState(initial?.name ?? saved.name)
+  const [rememberPw, setRememberPw] = useState(() => loadPref('kotari.rememberPassword', true))
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(initial?.error ?? null)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -173,10 +184,10 @@ export function ConnectModal({
     if (!name.trim()) return setError('Indique ton prénom (affiché à côté de ton curseur).')
     setBusy(true)
     setError(null)
-    // Le mot de passe n'est jamais mémorisé.
     savePref('kotari.connection', { host: h, port: String(p), name: name.trim() })
+    savePref('kotari.rememberPassword', rememberPw)
     try {
-      await onConnect({ host: h, port: p, password, name: name.trim() })
+      await onConnect({ host: h, port: p, password, name: name.trim() }, rememberPw)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setBusy(false)
@@ -198,17 +209,15 @@ export function ConnectModal({
         </div>
         <label className="form-row">
           <span>Mot de passe</span>
-          <input
-            className="input"
-            type="password"
-            autoFocus={!!host}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <input className="input" type="password" autoFocus={!!host} value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         <label className="form-row">
           <span>Ton prénom</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Affiché à côté de ton curseur" />
+        </label>
+        <label className="check small">
+          <input type="checkbox" checked={rememberPw} onChange={(e) => setRememberPw(e.target.checked)} />
+          Retenir le mot de passe (chiffré avec ton compte Windows)
         </label>
         {error && <div className="alert">{error}</div>}
         <div className="modal-actions">
@@ -220,6 +229,89 @@ export function ConnectModal({
           </button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+export function SettingsModal({
+  theme,
+  onTheme,
+  onClose
+}: {
+  theme: ThemeSettings
+  onTheme: (t: ThemeSettings) => void
+  onClose: () => void
+}) {
+  const modes: [ThemeMode, string][] = [
+    ['light', 'Clair'],
+    ['dark', 'Sombre'],
+    ['system', 'Comme Windows']
+  ]
+  const dark = isDark(theme)
+  return (
+    <Modal title="Réglages" onClose={onClose} wide>
+      <h3 className="settings-h">Apparence</h3>
+      <div className="tabs inline">
+        {modes.map(([m, label]) => (
+          <button key={m} className={`tab ${theme.mode === m ? 'on' : ''}`} onClick={() => onTheme({ ...theme, mode: m })}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <h3 className="settings-h">Couleur d'accent</h3>
+      <div className="swatches">
+        {PALETTES.map((p) => (
+          <button
+            key={p.id}
+            className={`swatch ${theme.palette === p.id ? 'on' : ''}`}
+            onClick={() => onTheme({ ...theme, palette: p.id })}
+            title={p.name}
+          >
+            <span className="swatch-dot" style={{ background: dark ? p.dark : p.light }} />
+            {p.name}
+          </button>
+        ))}
+        <label className={`swatch ${theme.palette === 'custom' ? 'on' : ''}`} title="Couleur personnalisée">
+          <input
+            type="color"
+            value={theme.custom}
+            onChange={(e) => onTheme({ ...theme, palette: 'custom', custom: e.target.value })}
+            onClick={() => theme.palette !== 'custom' && onTheme({ ...theme, palette: 'custom' })}
+          />
+          Perso
+        </label>
+      </div>
+
+      <h3 className="settings-h">Mise en forme du texte riche</h3>
+      <p className="muted small">Pas de barre d'outils : tape directement ces raccourcis au début d'une ligne ou autour d'un mot.</p>
+      <table className="md-help">
+        <tbody>
+          <tr><td><code># </code> <code>## </code> <code>### </code></td><td>Titre, sous-titre…</td></tr>
+          <tr><td><code>**gras**</code> ou Ctrl+B</td><td><strong>gras</strong></td></tr>
+          <tr><td><code>*italique*</code> ou Ctrl+I</td><td><em>italique</em></td></tr>
+          <tr><td><code>~~barré~~</code></td><td><s>barré</s></td></tr>
+          <tr><td><code>`code`</code></td><td><code>code</code></td></tr>
+          <tr><td><code>- </code> ou <code>* </code></td><td>Liste à puces</td></tr>
+          <tr><td><code>1. </code></td><td>Liste numérotée</td></tr>
+          <tr><td><code>&gt; </code></td><td>Citation</td></tr>
+          <tr><td><code>---</code></td><td>Ligne de séparation</td></tr>
+          <tr><td>Ctrl+Z / Ctrl+Y</td><td>Annuler / rétablir</td></tr>
+        </tbody>
+      </table>
+
+      <h3 className="settings-h">Raccourcis</h3>
+      <table className="md-help">
+        <tbody>
+          <tr><td>Ctrl+F</td><td>Rechercher dans la fiche (et ses sous-fiches)</td></tr>
+          <tr><td>Ctrl+Maj+F</td><td>Rechercher dans tout le projet et sur le serveur</td></tr>
+        </tbody>
+      </table>
+      <div className="modal-actions">
+        <button className="btn primary" onClick={onClose}>
+          Fermer
+        </button>
+      </div>
     </Modal>
   )
 }

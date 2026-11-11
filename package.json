@@ -1,7 +1,7 @@
 {
   "name": "kotari",
   "productName": "Kotari",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fiches imbriquées en local et édition à plusieurs en temps réel",
   "author": "Nicolas",
   "license": "UNLICENSED",
@@ -24,6 +24,7 @@
     "@tiptap/core": "^3.33.1",
     "@tiptap/extension-collaboration": "^3.33.1",
     "@tiptap/extension-collaboration-caret": "^3.33.1",
+    "@tiptap/extensions": "^3.33.1",
     "@tiptap/pm": "^3.33.1",
     "@tiptap/react": "^3.33.1",
     "@tiptap/starter-kit": "^3.33.1",

@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ensureFields, fieldsOf } from '@shared/content'
-import { childrenOf } from '@shared/model'
-import { ABILITY_FIELD_IDS } from '@shared/templates'
-import type { Library, OpenedDoc } from '../lib/library'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { fieldsOf } from '@shared/content'
+import { childrenOf, subtree } from '@shared/model'
+import type { SearchHit } from '@shared/search'
+import { focusKey, registerFocus, requestFocus } from '../lib/focus'
+import type { Library } from '../lib/library'
 import { useLibraryState } from '../lib/library'
 import type { ServerLibrary } from '../lib/serverLibrary'
-import { FieldsForm } from './Fields'
+import { useOpenedDoc } from '../lib/useDoc'
+import { FieldsForm, selectInInput } from './Fields'
+import { DocSearchBar } from './Search'
+import { SubGrid } from './SubGrid'
 
 interface Props {
   lib: Library
@@ -19,34 +23,24 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
   const { docs, types } = useLibraryState(lib)
   const meta = docs.find((d) => d.id === id)
   const type = types.find((t) => t.id === meta?.typeId)
-  const [opened, setOpened] = useState<OpenedDoc | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const exists = !!meta
+  const { opened, error } = useOpenedDoc(lib, id, !!meta, type)
+  const [searching, setSearching] = useState(false)
+  const titleRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => registerFocus(focusKey(id, '__title'), (q, n) => selectInInput(titleRef.current, q, n)), [id])
+
+  // Ctrl+F : recherche dans la fiche.
   useEffect(() => {
-    if (!exists) return
-    let alive = true
-    let od: OpenedDoc | null = null
-    setError(null)
-    lib
-      .openDoc(id)
-      .then((o) => {
-        if (!alive) return o.close()
-        od = o
-        setOpened(o)
-      })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)))
-    return () => {
-      alive = false
-      od?.close()
-      setOpened(null)
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setSearching(true)
+        window.dispatchEvent(new Event('kotari:focus-search'))
+      }
     }
-  }, [lib, id, exists])
-
-  // Champs ajoutés au type après la création de la fiche.
-  useEffect(() => {
-    if (opened && type) ensureFields(opened.ydoc, type)
-  }, [opened, type])
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
 
   const ancestors = useMemo(() => {
     const out = []
@@ -60,6 +54,7 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
   }, [docs, meta?.parentId])
 
   const children = useMemo(() => childrenOf(docs, id), [docs, id])
+  const descendantIds = useMemo(() => subtree(docs, id).slice(1).map((d) => d.id), [docs, id])
 
   if (!meta) {
     return (
@@ -71,7 +66,12 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
   }
 
   const user = lib.kind === 'server' ? (lib as ServerLibrary).user : null
-  const isCharacter = meta.typeId === 'modele-personnage'
+
+  const goToHit = (hit: SearchHit, query: string) => {
+    const key = focusKey(hit.docId, hit.path)
+    const shown = hit.docId === id || children.some((c) => c.id === hit.docId)
+    if (!requestFocus(key, query, hit.nth) && !shown) onOpen(hit.docId)
+  }
 
   return (
     <div className="fiche">
@@ -89,16 +89,31 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
         </div>
         <div className="title-row">
           <input
+            ref={titleRef}
             className="title-input"
             value={meta.title}
             placeholder="Sans titre"
             onChange={(e) => lib.updateMeta(id, { title: e.target.value })}
           />
           <span className="type-pill">{type?.name ?? 'Type inconnu'}</span>
+          <button className="btn ghost small" title="Rechercher (Ctrl+F)" onClick={() => setSearching((s) => !s)}>
+            Rechercher
+          </button>
           <button className="btn ghost small danger" onClick={() => onDelete(id)}>
             Supprimer
           </button>
         </div>
+        {searching && (
+          <DocSearchBar
+            lib={lib}
+            meta={meta}
+            ydoc={opened?.ydoc ?? null}
+            type={type}
+            descendantIds={descendantIds}
+            onGo={goToHit}
+            onClose={() => setSearching(false)}
+          />
+        )}
       </div>
 
       <div className="fiche-body">
@@ -109,11 +124,7 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
             key={opened.ydoc.guid}
             fieldsMap={fieldsOf(opened.ydoc)}
             fields={type.fields}
-            ctx={{
-              provider: opened.provider,
-              user,
-              abilityIds: isCharacter ? ABILITY_FIELD_IDS : undefined
-            }}
+            ctx={{ lib, docId: id, provider: opened.provider, user }}
           />
         )}
         {!opened && !error && <div className="muted">Chargement…</div>}
@@ -128,16 +139,17 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
           {children.length === 0 ? (
             <div className="muted small">Aucune. Par exemple, un Inventaire sous un Personnage.</div>
           ) : (
-            <ul className="child-list">
-              {children.map((c) => (
-                <li key={c.id}>
-                  <button className="child-link" onClick={() => onOpen(c.id)}>
-                    <span>{c.title || 'Sans titre'}</span>
-                    <span className="muted small">{types.find((t) => t.id === c.typeId)?.name}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            opened && (
+              <SubGrid
+                lib={lib}
+                parentDoc={opened.ydoc}
+                parentId={id}
+                docs={docs}
+                types={types}
+                onOpen={onOpen}
+                onDelete={onDelete}
+              />
+            )
           )}
         </section>
       </div>

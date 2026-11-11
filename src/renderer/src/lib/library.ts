@@ -3,6 +3,7 @@ import type * as Y from 'yjs'
 import type { Awareness } from 'y-protocols/awareness'
 import type { CopyPlan, ExportedDoc } from '@shared/copy'
 import type { DocMeta, TypeDef } from '@shared/model'
+import type { SearchHit } from '@shared/search'
 
 export type LibraryKind = 'local' | 'server'
 
@@ -35,6 +36,11 @@ export interface Library {
   /** Exporte les documents (contenu à jour, y compris ceux ouverts). */
   exportDocs(ids: string[]): Promise<ExportedDoc[]>
   importDocs(plan: CopyPlan): Promise<void>
+  /** Recherche dans le contenu (tous les documents, ou seulement `ids`). */
+  search(query: string, ids?: string[]): Promise<SearchHit[]>
+  getImage(hash: string): Promise<Uint8Array | null>
+  putImage(hash: string, data: Uint8Array): Promise<void>
+  missingImages(hashes: string[]): Promise<string[]>
 }
 
 export class Emitter {

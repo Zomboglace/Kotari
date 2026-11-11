@@ -2,22 +2,44 @@
 
 export const FORMAT_VERSION = 1
 
-export type FieldKind = 'text' | 'number' | 'richtext' | 'list'
-export type SubFieldKind = Exclude<FieldKind, 'list'>
+export type FieldKind =
+  | 'text'
+  | 'number'
+  | 'ability'
+  | 'gauge'
+  | 'checkbox'
+  | 'select'
+  | 'richtext'
+  | 'image'
+  | 'list'
 
-export interface SubField {
-  id: string
-  name: string
-  kind: SubFieldKind
+export type Rounding = 'floor' | 'round' | 'ceil'
+
+/** Modificateur d'une caractéristique : arrondi((valeur − base) / diviseur) + décalage. */
+export interface AbilityConfig {
+  base: number
+  divisor: number
+  rounding: Rounding
+  offset: number
 }
+
+export const DEFAULT_ABILITY: AbilityConfig = { base: 10, divisor: 2, rounding: 'floor', offset: 0 }
 
 export interface Field {
   id: string
   name: string
   kind: FieldKind
-  /** Uniquement pour kind === 'list'. */
-  subfields?: SubField[]
+  /** kind === 'list' : champs de chaque élément (listes imbriquées autorisées). */
+  subfields?: Field[]
+  /** kind === 'select' : choix proposés. */
+  options?: string[]
+  /** kind === 'ability'. */
+  ability?: AbilityConfig
 }
+
+/** Compatibilité : un sous-champ est un champ comme un autre. */
+export type SubField = Field
+export type SubFieldKind = FieldKind
 
 export interface TypeDef {
   id: string
@@ -42,9 +64,16 @@ export interface ProjectInfo {
 export const FIELD_KIND_LABELS: Record<FieldKind, string> = {
   text: 'Texte',
   number: 'Nombre',
+  ability: 'Caractéristique (+x)',
+  gauge: 'Jauge (actuel / max)',
+  checkbox: 'Case à cocher',
+  select: 'Choix dans une liste',
   richtext: 'Texte riche',
+  image: 'Image',
   list: 'Liste'
 }
+
+export const FIELD_KINDS: FieldKind[] = ['text', 'number', 'ability', 'gauge', 'checkbox', 'select', 'richtext', 'image', 'list']
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
@@ -61,6 +90,17 @@ const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/
 
 export function isSafeId(id: unknown): id is string {
   return typeof id === 'string' && SAFE_ID.test(id)
+}
+
+export function abilityModifier(value: number, cfg: AbilityConfig = DEFAULT_ABILITY): number {
+  const div = cfg.divisor || 1
+  const raw = (value - cfg.base) / div
+  const r = cfg.rounding === 'round' ? Math.round(raw) : cfg.rounding === 'ceil' ? Math.ceil(raw) : Math.floor(raw)
+  return r + (cfg.offset || 0)
+}
+
+export function formatModifier(m: number): string {
+  return m >= 0 ? `+${m}` : `${m}`
 }
 
 /** Enfants triés d'un parent. */
@@ -112,17 +152,13 @@ export function orderAt(siblings: DocMeta[], index: number): number {
   return (before + after) / 2
 }
 
-/** Compare deux définitions de type (hors nom d'affichage et ordre). */
+function shape(fields: Field[]): unknown {
+  return fields.map((f) => ({ id: f.id, kind: f.kind, sub: f.kind === 'list' ? shape(f.subfields ?? []) : undefined }))
+}
+
+/** Compare deux définitions de type (structure des champs, hors noms et réglages d'affichage). */
 export function sameFields(a: TypeDef, b: TypeDef): boolean {
-  const norm = (t: TypeDef) =>
-    JSON.stringify(
-      t.fields.map((f) => ({
-        id: f.id,
-        kind: f.kind,
-        subfields: (f.subfields ?? []).map((s) => ({ id: s.id, kind: s.kind }))
-      }))
-    )
-  return norm(a) === norm(b)
+  return JSON.stringify(shape(a.fields)) === JSON.stringify(shape(b.fields))
 }
 
 /** Validation défensive des données lues sur disque ou reçues du réseau. */
@@ -139,21 +175,25 @@ export function isDocMeta(v: unknown): v is DocMeta {
   )
 }
 
-const KINDS: FieldKind[] = ['text', 'number', 'richtext', 'list']
+function isField(f: Field, depth: number): boolean {
+  if (!f || !isSafeId(f.id) || typeof f.name !== 'string' || !FIELD_KINDS.includes(f.kind)) return false
+  if (f.kind === 'list') {
+    if (depth > 20 || !Array.isArray(f.subfields)) return false
+    if (!f.subfields.every((s) => isField(s, depth + 1))) return false
+  }
+  if (f.options !== undefined && !(Array.isArray(f.options) && f.options.every((o) => typeof o === 'string'))) return false
+  if (f.ability !== undefined) {
+    const a = f.ability
+    if (typeof a !== 'object' || ![a.base, a.divisor, a.offset].every((n) => typeof n === 'number' && Number.isFinite(n))) return false
+    if (!['floor', 'round', 'ceil'].includes(a.rounding)) return false
+  }
+  return true
+}
 
 export function isTypeDef(v: unknown): v is TypeDef {
   const t = v as TypeDef
   if (!t || !isSafeId(t.id) || typeof t.name !== 'string' || typeof t.order !== 'number') return false
-  if (!Array.isArray(t.fields)) return false
-  return t.fields.every(
-    (f) =>
-      isSafeId(f.id) &&
-      typeof f.name === 'string' &&
-      KINDS.includes(f.kind) &&
-      (f.kind !== 'list' ||
-        (Array.isArray(f.subfields) &&
-          f.subfields.every((s) => isSafeId(s.id) && typeof s.name === 'string' && (s.kind as string) !== 'list' && KINDS.includes(s.kind))))
-  )
+  return Array.isArray(t.fields) && t.fields.every((f) => isField(f, 0))
 }
 
 export function pickMeta(d: DocMeta): DocMeta {

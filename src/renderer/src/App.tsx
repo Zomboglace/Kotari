@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { initialContent } from '@shared/content'
+import { collectImages } from '@shared/content'
 import { planCopy } from '@shared/copy'
+import type { SearchHit } from '@shared/search'
 import type { DocMeta } from '@shared/model'
 import { childrenOf, isDescendant, newId, orderAt, subtree } from '@shared/model'
-import type { ProjectSnapshot } from './env'
+import type { ProjectSnapshot, SavedServerInfo } from './env'
+import { focusKey, requestFocus } from './lib/focus'
+import { loadTheme, saveTheme, watchSystemTheme, type ThemeSettings } from './lib/theme'
 import { loadPref, savePref, UiContext, type UiApi } from './lib/hooks'
 import type { Library, LibraryKind } from './lib/library'
 import { useLibraryState } from './lib/library'
@@ -11,7 +15,8 @@ import { LocalLibrary } from './lib/localLibrary'
 import { ServerLibrary, type ConnectOptions } from './lib/serverLibrary'
 import { Fiche } from './components/Fiche'
 import { ProjectHome, Welcome, type RecentProject } from './components/Home'
-import { ConfirmModal, ConnectModal, NewDocModal } from './components/Modals'
+import { ConfirmModal, ConnectModal, NewDocModal, SettingsModal, type ConnectInitial } from './components/Modals'
+import { GlobalSearch } from './components/Search'
 import { Tree, type DragSource, type DropPos } from './components/Tree'
 import { TypesScreen } from './components/TypesScreen'
 
@@ -19,7 +24,9 @@ type View = { kind: 'home' } | { kind: 'doc'; lib: LibraryKind; id: string } | {
 
 type ModalState =
   | { kind: 'new-doc'; lib: LibraryKind; parentId: string | null }
-  | { kind: 'connect' }
+  | { kind: 'connect'; initial?: ConnectInitial }
+  | { kind: 'settings' }
+  | { kind: 'search' }
   | {
       kind: 'confirm'
       title: string
@@ -67,6 +74,29 @@ export function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [filter, setFilter] = useState('')
   const [recents, setRecents] = useState<RecentProject[]>(() => loadPref(RECENTS_KEY, []))
+  const [savedServers, setSavedServers] = useState<SavedServerInfo[]>([])
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const [theme, setTheme] = useState<ThemeSettings>(loadTheme)
+  const themeRef = useRef(theme)
+  themeRef.current = theme
+
+  useEffect(() => watchSystemTheme(() => themeRef.current), [])
+  const refreshServers = () => window.kotari.listServers().then(setSavedServers).catch(() => {})
+  useEffect(() => {
+    void refreshServers()
+  }, [])
+
+  // Ctrl+Maj+F : recherche globale.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setModal((m) => (m && m.kind !== 'search' ? m : { kind: 'search' }))
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
 
   const localRef = useRef(local)
   localRef.current = local
@@ -137,9 +167,16 @@ export function App() {
 
   // ---------- Serveur ----------
 
-  const connect = async (opts: ConnectOptions) => {
+  const connect = async (opts: ConnectOptions, rememberPassword: boolean | 'keep' = 'keep') => {
     serverRef.current?.destroy()
     const lib = await ServerLibrary.connect(opts)
+    await window.kotari
+      .rememberServer(
+        { host: opts.host, port: opts.port, name: opts.name },
+        rememberPassword === 'keep' ? undefined : rememberPassword ? opts.password : null
+      )
+      .catch(() => {})
+    void refreshServers()
     lib.onLost = (reason) => {
       setServer(null)
       setView((v) => (v.kind !== 'home' && v.lib === 'server' ? { kind: 'home' } : v))
@@ -148,6 +185,31 @@ export function App() {
     setServer(lib)
     setModal(null)
     ui.toast(`Connecté à ${lib.label}.`)
+  }
+
+  const quickConnect = async (s: SavedServerInfo) => {
+    const initial: ConnectInitial = { host: s.host, port: s.port, name: s.name }
+    const password = s.hasPassword ? await window.kotari.serverPassword(s.id) : null
+    if (password === null) return setModal({ kind: 'connect', initial })
+    setConnecting(s.id)
+    try {
+      await connect({ host: s.host, port: s.port, name: s.name, password })
+    } catch (e) {
+      setModal({ kind: 'connect', initial: { ...initial, error: errMsg(e) } })
+    } finally {
+      setConnecting(null)
+    }
+  }
+
+  const forgetServer = async (s: SavedServerInfo) => {
+    await window.kotari.forgetServer(s.id)
+    void refreshServers()
+  }
+
+  const pickSearchHit = (kind: LibraryKind, hit: SearchHit, query: string) => {
+    setModal(null)
+    setView({ kind: 'doc', lib: kind, id: hit.docId })
+    setTimeout(() => requestFocus(focusKey(hit.docId, hit.path), query, hit.nth), 0)
   }
 
   const disconnect = () => {
@@ -214,6 +276,12 @@ export function App() {
     await run(async () => {
       const ids = subtree(source.getState().docs, src.id).map((d) => d.id)
       const exported = await source.exportDocs(ids)
+      // Images référencées : envoyées d'abord si la destination ne les a pas.
+      const hashes = [...new Set(exported.flatMap((d) => collectImages(d.content)))]
+      for (const h of await dest.missingImages(hashes)) {
+        const data = await source.getImage(h)
+        if (data) await dest.putImage(h, data)
+      }
       const target = dropTarget(destDocs, null, refId, pos)
       const plan = planCopy(exported, source.getState().types, dest.getState().types, target.parentId, target.order)
       await dest.importDocs(plan)
@@ -287,6 +355,11 @@ export function App() {
     )
   }
 
+  const searchLibs = useMemo(
+    () => [...(local ? [{ kind: 'local' as const, lib: local as Library }] : []), ...(server ? [{ kind: 'server' as const, lib: server as Library }] : [])],
+    [local, server]
+  )
+
   const newDocLib = modal?.kind === 'new-doc' ? libOf(modal.lib) : null
   const newDocState = modal?.kind === 'new-doc' ? (modal.lib === 'local' ? localState : serverState) : null
 
@@ -294,8 +367,18 @@ export function App() {
     <UiContext.Provider value={ui}>
       <div className="app">
         <aside className="sidebar">
-          <div className="brand" onClick={() => setView({ kind: 'home' })} title="Accueil">
-            Kotari
+          <div className="brand-row">
+            <div className="brand" onClick={() => setView({ kind: 'home' })} title="Accueil">
+              Kotari
+            </div>
+            {(local || server) && (
+              <button className="icon-btn" title="Rechercher partout (Ctrl+Maj+F)" onClick={() => setModal({ kind: 'search' })}>
+                ⌕
+              </button>
+            )}
+            <button className="icon-btn" title="Réglages" onClick={() => setModal({ kind: 'settings' })}>
+              ⚙
+            </button>
           </div>
           {(local || server) && (
             <input
@@ -333,8 +416,24 @@ export function App() {
               sidebar('local', local)
             ) : (
               <div className="lib-placeholder">
+                {recents.length > 0 && (
+                  <ul className="side-recents">
+                    {recents.slice(0, 6).map((r) => (
+                      <li key={r.path}>
+                        <button
+                          className="side-recent"
+                          title={r.path}
+                          onClick={() => run(async () => useProject(await window.kotari.openProjectPath(r.path)))}
+                        >
+                          <span className="side-recent-name">{r.name}</span>
+                          <span className="muted small side-recent-sub">{r.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <button className="btn small" onClick={() => setView({ kind: 'home' })}>
-                  Ouvrir ou créer un projet
+                  Ouvrir ou créer un projet…
                 </button>
               </div>
             )}
@@ -387,8 +486,34 @@ export function App() {
               </>
             ) : (
               <div className="lib-placeholder">
+                {savedServers.length > 0 && (
+                  <ul className="side-recents">
+                    {savedServers.map((sv) => (
+                      <li key={sv.id}>
+                        <button
+                          className="side-recent"
+                          disabled={!!connecting}
+                          title={sv.hasPassword ? 'Se reconnecter' : 'Se reconnecter (mot de passe demandé)'}
+                          onClick={() => void quickConnect(sv)}
+                        >
+                          <span className="side-recent-name">
+                            {sv.host}:{sv.port}
+                            {connecting === sv.id && <span className="muted small"> · connexion…</span>}
+                          </span>
+                          <span className="muted small side-recent-sub">
+                            {sv.name}
+                            {sv.hasPassword ? ' · mot de passe retenu' : ''}
+                          </span>
+                        </button>
+                        <button className="icon-btn" title="Oublier ce serveur" onClick={() => void forgetServer(sv)}>
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <button className="btn small" onClick={() => setModal({ kind: 'connect' })}>
-                  Se connecter à un serveur
+                  {savedServers.length ? 'Autre serveur…' : 'Se connecter à un serveur'}
                 </button>
               </div>
             )}
@@ -412,7 +537,26 @@ export function App() {
             onClose={() => setModal(null)}
           />
         )}
-        {modal?.kind === 'connect' && <ConnectModal onConnect={connect} onClose={() => setModal(null)} />}
+        {modal?.kind === 'connect' && (
+          <ConnectModal initial={modal.initial} onConnect={(o, r) => connect(o, r)} onClose={() => setModal(null)} />
+        )}
+        {modal?.kind === 'settings' && (
+          <SettingsModal
+            theme={theme}
+            onTheme={(t) => {
+              setTheme(t)
+              saveTheme(t)
+            }}
+            onClose={() => setModal(null)}
+          />
+        )}
+        {modal?.kind === 'search' && (local || server) && (
+          <GlobalSearch
+            libs={searchLibs}
+            onPick={pickSearchHit}
+            onClose={() => setModal(null)}
+          />
+        )}
         {modal?.kind === 'confirm' && (
           <ConfirmModal
             title={modal.title}

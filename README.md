@@ -55,6 +55,7 @@ mon-monde/
   types/<id>.json          définition des champs
   documents/<id>.json      titre, type, parent, ordre
   documents/<id>.yjs       contenu (Yjs : fusion des saisies simultanées)
+  images/<empreinte>       images des champs Image (SHA-256, jamais en double)
   server.json              uniquement côté serveur : port, mot de passe haché
 ```
 
@@ -66,9 +67,22 @@ Le même dossier s'ouvre en local ou s'héberge sur le serveur.
 - Glisser entre l'arbre local et l'arbre serveur : **copie** le document et ses sous-fiches
   (nouveaux identifiants). Les types manquants sont copiés ; un type de même identifiant
   mais aux champs différents devient « Nom (2) ».
-- Un type utilisé par au moins une fiche ne peut pas être supprimé. Le genre d'un champ
-  enregistré ne change plus ; retirer un champ abandonne ses valeurs.
-- Le mot de passe du serveur n'est jamais mémorisé par le client.
+- Un type utilisé par au moins une fiche ne peut pas être supprimé. Changer le genre d'un champ
+  convertit les valeurs quand c'est possible (avec avertissement) ; retirer un champ abandonne ses valeurs.
+- Le mot de passe du serveur n'est retenu que si on coche la case, chiffré avec le compte Windows.
 - Connexion WebSocket non chiffrée : réseau local ou tunnel (Tailscale) uniquement.
+
+## Nouveautés 0.2
+
+- Thème clair / sombre / système et couleur d'accent (⚙ en haut de la barre latérale).
+- Texte riche sans barre d'outils : Markdown au clavier (`#`, `**gras**`, `- `, `> `…).
+- Sous-fiches affichées en cartes éditables dans la fiche parente ; lignes, nombre par ligne
+  et hauteur réglables, cartes déplaçables. La disposition est enregistrée dans la fiche.
+- Ctrl+F (fiche + sous-fiches) et Ctrl+Maj+F (tout le projet et le serveur).
+- Projets et serveurs récents dans la barre latérale ; mot de passe retenu chiffré (safeStorage).
+- Nouveaux genres de champs : Caractéristique (+x, formule réglable), Jauge, Case à cocher,
+  Choix dans une liste, Image (largeur réglable dans la fiche). Listes imbriquées sans limite.
+- Le genre d'un champ peut changer : conversion automatique quand c'est possible.
+- L'écran Types se souvient du type ouvert et d'une création en cours.
 
 Raccourci de debug : `Ctrl+Shift+I` ouvre les outils de développement.

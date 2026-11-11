@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { Field, FieldKind, SubField, SubFieldKind, TypeDef } from '@shared/model'
-import { FIELD_KIND_LABELS, newId } from '@shared/model'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Field, FieldKind, Rounding, TypeDef } from '@shared/model'
+import { abilityModifier, DEFAULT_ABILITY, FIELD_KIND_LABELS, FIELD_KINDS, formatModifier, newId } from '@shared/model'
 import { TEMPLATES } from '@shared/templates'
-import { useUi } from '../lib/hooks'
+import { loadPref, savePref, useUi } from '../lib/hooks'
 import type { Library, LibraryKind } from '../lib/library'
 import { useLibraryState } from '../lib/library'
 
@@ -11,15 +11,33 @@ interface Props {
   initial: LibraryKind
 }
 
-const KINDS: FieldKind[] = ['text', 'number', 'richtext', 'list']
-const SUB_KINDS: SubFieldKind[] = ['text', 'number', 'richtext']
-
 function moveItem<T>(arr: T[], from: number, to: number): T[] {
   if (to < 0 || to >= arr.length) return arr
   const out = [...arr]
   const [x] = out.splice(from, 1)
   out.splice(to, 0, x)
   return out
+}
+
+// ---- Mémoire de l'écran (type sélectionné, création en cours), par bibliothèque ----
+
+interface Memory {
+  selectedId: string | null
+  draft: TypeDef | null
+  base: string | null
+  isNew: boolean
+}
+
+const memKey = (lib: Library) => `kotari.types.${lib.kind}.${lib.label}`
+const memory = new Map<string, Memory>()
+
+function recall(lib: Library): Memory | null {
+  return memory.get(memKey(lib)) ?? loadPref<Memory | null>(memKey(lib), null)
+}
+
+function remember(lib: Library, m: Memory) {
+  memory.set(memKey(lib), m)
+  savePref(memKey(lib), m)
 }
 
 export function TypesScreen({ libs, initial }: Props) {
@@ -51,32 +69,70 @@ export function TypesScreen({ libs, initial }: Props) {
   )
 }
 
+/** Chemins "a", "liste/b"… des champs enregistrés, avec leur genre. */
+function savedKinds(fields: Field[], prefix = '', out = new Map<string, FieldKind>()) {
+  for (const f of fields) {
+    const p = prefix ? `${prefix}/${f.id}` : f.id
+    out.set(p, f.kind)
+    if (f.kind === 'list') savedKinds(f.subfields ?? [], p, out)
+  }
+  return out
+}
+
+function cleanFields(fields: Field[]): Field[] {
+  return fields.map((f) => {
+    const out: Field = { id: f.id, name: f.name.trim() || 'Sans nom', kind: f.kind }
+    if (f.kind === 'list') out.subfields = cleanFields(f.subfields ?? [])
+    if (f.kind === 'select') out.options = [...new Set((f.options ?? []).map((o) => o.trim()).filter(Boolean))]
+    if (f.kind === 'ability') out.ability = { ...DEFAULT_ABILITY, ...f.ability }
+    return out
+  })
+}
+
+function hasEmptyList(fields: Field[]): boolean {
+  return fields.some((f) => f.kind === 'list' && (!f.subfields?.length || hasEmptyList(f.subfields)))
+}
+
 function TypesEditor({ lib }: { lib: Library }) {
   const { types, docs } = useLibraryState(lib)
   const ui = useUi()
-  const [selectedId, setSelectedId] = useState<string | null>(types[0]?.id ?? null)
-  const [draft, setDraft] = useState<TypeDef | null>(null)
-  const [isNew, setIsNew] = useState(false)
+  const mem = useRef(recall(lib))
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => (mem.current?.selectedId && (mem.current.isNew || types.some((t) => t.id === mem.current!.selectedId)) ? mem.current.selectedId : types[0]?.id) ?? null
+  )
+  const [isNew, setIsNew] = useState(() => !!mem.current?.isNew && !!mem.current.draft)
+  const [draft, setDraft] = useState<TypeDef | null>(() => {
+    const m = mem.current
+    if (m?.draft && m.selectedId === selectedId) return m.draft
+    const t = types.find((x) => x.id === selectedId)
+    return t ? structuredClone(t) : null
+  })
+  // Version enregistrée à partir de laquelle le brouillon a été commencé.
+  const [base, setBase] = useState<string | null>(() => {
+    const m = mem.current
+    if (m?.draft && m.selectedId === selectedId) return m.base
+    const t = types.find((x) => x.id === selectedId)
+    return t ? JSON.stringify(t) : null
+  })
   const [saving, setSaving] = useState(false)
 
   const stored = types.find((t) => t.id === selectedId) ?? null
-  const savedFieldIds = useMemo(() => {
-    const s = new Set<string>()
-    for (const f of stored?.fields ?? []) {
-      s.add(f.id)
-      for (const sf of f.subfields ?? []) s.add(`${f.id}/${sf.id}`)
-    }
-    return s
+  const saved = useMemo(() => savedKinds(stored?.fields ?? []), [stored])
+  const dirty = !!draft && (isNew || JSON.stringify(draft) !== base)
+  const usage = docs.filter((d) => d.typeId === selectedId).length
+
+  useEffect(() => {
+    remember(lib, { selectedId, draft: dirty ? draft : null, base, isNew })
+  }, [lib, selectedId, draft, base, isNew, dirty])
+
+  // Type modifié ailleurs (autre personne sur le serveur) : suit si aucun changement en cours.
+  useEffect(() => {
+    if (isNew || dirty) return
+    setDraft(stored ? structuredClone(stored) : null)
+    setBase(stored ? JSON.stringify(stored) : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored])
 
-  // Recharge le brouillon quand on change de type (ou qu'il est modifié ailleurs).
-  useEffect(() => {
-    if (isNew) return
-    setDraft(stored ? structuredClone(stored) : null)
-  }, [stored, isNew])
-
-  const dirty = !!draft && (isNew || JSON.stringify(draft) !== JSON.stringify(stored))
-  const usage = docs.filter((d) => d.typeId === selectedId).length
   const maxOrder = types.reduce((m, t) => Math.max(m, t.order), 0)
   const missingTemplates = TEMPLATES.filter((t) => !types.some((x) => x.id === t.id))
 
@@ -89,11 +145,18 @@ function TypesEditor({ lib }: { lib: Library }) {
       danger: true
     })
 
+  const load = (id: string | null) => {
+    const t = types.find((x) => x.id === id)
+    setIsNew(false)
+    setSelectedId(id)
+    setDraft(t ? structuredClone(t) : null)
+    setBase(t ? JSON.stringify(t) : null)
+  }
+
   const select = async (id: string) => {
     if (id === selectedId && !isNew) return
     if (!(await leave())) return
-    setIsNew(false)
-    setSelectedId(id)
+    load(id)
   }
 
   const create = async () => {
@@ -102,49 +165,37 @@ function TypesEditor({ lib }: { lib: Library }) {
     setIsNew(true)
     setSelectedId(t.id)
     setDraft(t)
+    setBase(null)
   }
 
   const addTemplate = async (tpl: TypeDef) => {
     await lib.saveType({ ...structuredClone(tpl), order: maxOrder + 1 })
     ui.toast(`Modèle « ${tpl.name} » ajouté.`)
-    if (!dirty) {
-      setIsNew(false)
-      setSelectedId(tpl.id)
-    }
   }
 
   const reorderType = async (id: string, dir: -1 | 1) => {
-    const sorted = [...types]
-    const i = sorted.findIndex((t) => t.id === id)
+    const i = types.findIndex((t) => t.id === id)
     const j = i + dir
-    if (j < 0 || j >= sorted.length) return
-    const a = sorted[i]
-    const b = sorted[j]
+    if (j < 0 || j >= types.length) return
+    const a = types[i]
+    const b = types[j]
     await lib.saveType({ ...a, order: b.order })
     await lib.saveType({ ...b, order: a.order })
   }
 
   const save = async () => {
     if (!draft) return
-    const clean: TypeDef = {
-      ...draft,
-      name: draft.name.trim() || 'Sans nom',
-      fields: draft.fields.map((f) => ({
-        ...f,
-        name: f.name.trim() || 'Sans nom',
-        ...(f.kind === 'list'
-          ? { subfields: (f.subfields ?? []).map((s) => ({ ...s, name: s.name.trim() || 'Sans nom' })) }
-          : { subfields: undefined })
-      }))
-    }
-    if (clean.fields.some((f) => f.kind === 'list' && !f.subfields?.length)) {
+    const clean: TypeDef = { ...draft, name: draft.name.trim() || 'Sans nom', fields: cleanFields(draft.fields) }
+    if (hasEmptyList(clean.fields)) {
       ui.toast('Une liste doit avoir au moins un sous-champ.', 'error')
       return
     }
     setSaving(true)
     try {
-      await lib.saveType(JSON.parse(JSON.stringify(clean)))
+      await lib.saveType(clean)
       setIsNew(false)
+      setDraft(structuredClone(clean))
+      setBase(JSON.stringify(clean))
       ui.toast('Type enregistré.')
     } catch (e) {
       ui.toast(e instanceof Error ? e.message : String(e), 'error')
@@ -154,8 +205,7 @@ function TypesEditor({ lib }: { lib: Library }) {
   }
 
   const remove = async () => {
-    if (!stored) return
-    if (usage > 0) return
+    if (!stored || usage > 0) return
     if (
       await ui.confirm({
         title: `Supprimer le type « ${stored.name} » ?`,
@@ -166,34 +216,12 @@ function TypesEditor({ lib }: { lib: Library }) {
     ) {
       try {
         await lib.deleteType(stored.id)
-        setSelectedId(null)
+        load(types.find((t) => t.id !== stored.id)?.id ?? null)
       } catch (e) {
         ui.toast(e instanceof Error ? e.message : String(e), 'error')
       }
     }
   }
-
-  const patchField = (i: number, patch: Partial<Field>) =>
-    setDraft((d) => d && { ...d, fields: d.fields.map((f, k) => (k === i ? { ...f, ...patch } : f)) })
-
-  const removeField = async (i: number) => {
-    const f = draft!.fields[i]
-    if (
-      savedFieldIds.has(f.id) &&
-      !(await ui.confirm({
-        title: `Retirer le champ « ${f.name} » ?`,
-        message:
-          'Les valeurs déjà saisies pour ce champ dans les fiches seront abandonnées (elles ne seront plus affichées).',
-        confirmLabel: 'Retirer',
-        danger: true
-      }))
-    )
-      return
-    setDraft((d) => d && { ...d, fields: d.fields.filter((_, k) => k !== i) })
-  }
-
-  const addField = () =>
-    setDraft((d) => d && { ...d, fields: [...d.fields, { id: newId(), name: '', kind: 'text' }] })
 
   return (
     <div className="types-layout">
@@ -209,12 +237,7 @@ function TypesEditor({ lib }: { lib: Library }) {
                 <button className="icon-btn" title="Monter" disabled={i === 0} onClick={() => reorderType(t.id, -1)}>
                   ↑
                 </button>
-                <button
-                  className="icon-btn"
-                  title="Descendre"
-                  disabled={i === types.length - 1}
-                  onClick={() => reorderType(t.id, 1)}
-                >
+                <button className="icon-btn" title="Descendre" disabled={i === types.length - 1} onClick={() => reorderType(t.id, 1)}>
                   ↓
                 </button>
               </span>
@@ -251,85 +274,21 @@ function TypesEditor({ lib }: { lib: Library }) {
           <>
             <label className="form-row">
               <span>Nom du type</span>
-              <input
-                className="input big"
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              />
+              <input className="input big" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </label>
 
             <h3>Champs</h3>
-            {draft.fields.length === 0 && <div className="muted small">Aucun champ pour l’instant.</div>}
-            <ol className="field-rows">
-              {draft.fields.map((f, i) => (
-                <li key={f.id} className="field-row">
-                  <div className="field-row-main">
-                    <input
-                      className="input"
-                      placeholder="Nom du champ"
-                      value={f.name}
-                      onChange={(e) => patchField(i, { name: e.target.value })}
-                    />
-                    <select
-                      className="input select"
-                      value={f.kind}
-                      disabled={savedFieldIds.has(f.id)}
-                      title={savedFieldIds.has(f.id) ? 'Le genre d’un champ enregistré ne peut plus changer.' : ''}
-                      onChange={(e) => {
-                        const k = e.target.value as FieldKind
-                        patchField(i, {
-                          kind: k,
-                          subfields: k === 'list' ? [{ id: newId(), name: 'Nom', kind: 'text' }] : undefined
-                        })
-                      }}
-                    >
-                      {KINDS.map((k) => (
-                        <option key={k} value={k}>
-                          {FIELD_KIND_LABELS[k]}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="icon-btn"
-                      disabled={i === 0}
-                      onClick={() => setDraft({ ...draft, fields: moveItem(draft.fields, i, i - 1) })}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      className="icon-btn"
-                      disabled={i === draft.fields.length - 1}
-                      onClick={() => setDraft({ ...draft, fields: moveItem(draft.fields, i, i + 1) })}
-                    >
-                      ↓
-                    </button>
-                    <button className="icon-btn danger" title="Retirer" onClick={() => removeField(i)}>
-                      ×
-                    </button>
-                  </div>
-                  {f.kind === 'list' && (
-                    <SubFieldsEditor
-                      parentId={f.id}
-                      subfields={f.subfields ?? []}
-                      savedIds={savedFieldIds}
-                      onChange={(subfields) => patchField(i, { subfields })}
-                    />
-                  )}
-                </li>
-              ))}
-            </ol>
-            <button className="btn ghost small" onClick={addField}>
-              + Ajouter un champ
-            </button>
+            <FieldListEditor
+              fields={draft.fields}
+              prefix=""
+              saved={saved}
+              usage={isNew ? 0 : usage}
+              onChange={(fields) => setDraft({ ...draft, fields })}
+            />
 
             <div className="editor-actions">
               {!isNew && (
-                <button
-                  className="btn ghost danger"
-                  disabled={usage > 0}
-                  title={usage > 0 ? `Utilisé par ${usage} fiche(s)` : ''}
-                  onClick={remove}
-                >
+                <button className="btn ghost danger" disabled={usage > 0} title={usage > 0 ? `Utilisé par ${usage} fiche(s)` : ''} onClick={remove}>
                   Supprimer le type
                 </button>
               )}
@@ -340,15 +299,7 @@ function TypesEditor({ lib }: { lib: Library }) {
               )}
               <span className="spacer" />
               {dirty && (
-                <button
-                  className="btn ghost"
-                  onClick={() => {
-                    if (isNew) {
-                      setIsNew(false)
-                      setSelectedId(types[0]?.id ?? null)
-                    } else setDraft(stored ? structuredClone(stored) : null)
-                  }}
-                >
+                <button className="btn ghost" onClick={() => (isNew ? load(types[0]?.id ?? null) : load(selectedId))}>
                   Annuler
                 </button>
               )}
@@ -363,77 +314,169 @@ function TypesEditor({ lib }: { lib: Library }) {
   )
 }
 
-function SubFieldsEditor({
-  parentId,
-  subfields,
-  savedIds,
+function FieldListEditor({
+  fields,
+  prefix,
+  saved,
+  usage,
   onChange
 }: {
-  parentId: string
-  subfields: SubField[]
-  savedIds: Set<string>
-  onChange: (s: SubField[]) => void
+  fields: Field[]
+  prefix: string
+  saved: Map<string, FieldKind>
+  usage: number
+  onChange: (f: Field[]) => void
 }) {
   const ui = useUi()
-  const patch = (i: number, p: Partial<SubField>) => onChange(subfields.map((s, k) => (k === i ? { ...s, ...p } : s)))
+  const patch = (i: number, p: Partial<Field>) => onChange(fields.map((f, k) => (k === i ? { ...f, ...p } : f)))
+  const pathOf = (f: Field) => (prefix ? `${prefix}/${f.id}` : f.id)
+
   const remove = async (i: number) => {
-    const s = subfields[i]
+    const f = fields[i]
     if (
-      savedIds.has(`${parentId}/${s.id}`) &&
+      saved.has(pathOf(f)) &&
+      usage > 0 &&
       !(await ui.confirm({
-        title: `Retirer le sous-champ « ${s.name} » ?`,
-        message: 'Les valeurs déjà saisies seront abandonnées.',
+        title: `Retirer le champ « ${f.name} » ?`,
+        message: 'Les valeurs déjà saisies pour ce champ dans les fiches seront abandonnées.',
         confirmLabel: 'Retirer',
         danger: true
       }))
     )
       return
-    onChange(subfields.filter((_, k) => k !== i))
+    onChange(fields.filter((_, k) => k !== i))
   }
+
+  const changeKind = async (i: number, kind: FieldKind) => {
+    const f = fields[i]
+    const was = saved.get(pathOf(f))
+    if (was && was !== kind && usage > 0) {
+      const lossless =
+        (['number', 'ability'].includes(was) && ['number', 'ability', 'gauge', 'text', 'richtext'].includes(kind)) ||
+        (was === 'text' && kind === 'richtext')
+      const ok = await ui.confirm({
+        title: `Changer « ${f.name} » en ${FIELD_KIND_LABELS[kind]} ?`,
+        message: lossless
+          ? `Les valeurs existantes seront converties à l'enregistrement.`
+          : `Les valeurs déjà saisies seront converties quand c'est possible (texte ↔ nombre, nombre → jauge…). Sinon elles seront perdues.`,
+        confirmLabel: 'Changer',
+        danger: !lossless
+      })
+      if (!ok) return
+    }
+    patch(i, {
+      kind,
+      subfields: kind === 'list' ? (f.subfields?.length ? f.subfields : [{ id: newId(), name: 'Nom', kind: 'text' }]) : undefined,
+      options: kind === 'select' ? (f.options ?? []) : undefined,
+      ability: kind === 'ability' ? (f.ability ?? { ...DEFAULT_ABILITY }) : undefined
+    })
+  }
+
   return (
-    <div className="subfields">
-      <div className="muted small">Chaque élément de la liste contient :</div>
-      {subfields.map((s, i) => (
-        <div key={s.id} className="field-row-main sub">
-          <input
-            className="input"
-            placeholder="Nom du sous-champ"
-            value={s.name}
-            onChange={(e) => patch(i, { name: e.target.value })}
-          />
-          <select
-            className="input select"
-            value={s.kind}
-            disabled={savedIds.has(`${parentId}/${s.id}`)}
-            onChange={(e) => patch(i, { kind: e.target.value as SubFieldKind })}
-          >
-            {SUB_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {FIELD_KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
-          <button className="icon-btn" disabled={i === 0} onClick={() => onChange(moveItem(subfields, i, i - 1))}>
-            ↑
-          </button>
-          <button
-            className="icon-btn"
-            disabled={i === subfields.length - 1}
-            onClick={() => onChange(moveItem(subfields, i, i + 1))}
-          >
-            ↓
-          </button>
-          <button className="icon-btn danger" onClick={() => remove(i)}>
-            ×
-          </button>
-        </div>
-      ))}
-      <button
-        className="btn ghost small"
-        onClick={() => onChange([...subfields, { id: newId(), name: '', kind: 'text' }])}
-      >
-        + Sous-champ
+    <>
+      {fields.length === 0 && <div className="muted small">Aucun champ pour l’instant.</div>}
+      <ol className="field-rows">
+        {fields.map((f, i) => (
+          <li key={f.id} className="field-row">
+            <div className="field-row-main">
+              <input className="input" placeholder="Nom du champ" value={f.name} onChange={(e) => patch(i, { name: e.target.value })} />
+              <select className="input select" value={f.kind} onChange={(e) => void changeKind(i, e.target.value as FieldKind)}>
+                {FIELD_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {FIELD_KIND_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <button className="icon-btn" disabled={i === 0} onClick={() => onChange(moveItem(fields, i, i - 1))}>
+                ↑
+              </button>
+              <button className="icon-btn" disabled={i === fields.length - 1} onClick={() => onChange(moveItem(fields, i, i + 1))}>
+                ↓
+              </button>
+              <button className="icon-btn danger" title="Retirer" onClick={() => remove(i)}>
+                ×
+              </button>
+            </div>
+            {f.kind === 'ability' && <AbilityEditor field={f} onChange={(ability) => patch(i, { ability })} />}
+            {f.kind === 'select' && <OptionsEditor options={f.options ?? []} onChange={(options) => patch(i, { options })} />}
+            {f.kind === 'list' && (
+              <div className="subfields">
+                <div className="muted small">Chaque élément de la liste contient :</div>
+                <FieldListEditor
+                  fields={f.subfields ?? []}
+                  prefix={pathOf(f)}
+                  saved={saved}
+                  usage={usage}
+                  onChange={(subfields) => patch(i, { subfields })}
+                />
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      <button className="btn ghost small" onClick={() => onChange([...fields, { id: newId(), name: '', kind: 'text' }])}>
+        + Ajouter un {prefix ? 'sous-champ' : 'champ'}
       </button>
+    </>
+  )
+}
+
+function AbilityEditor({ field, onChange }: { field: Field; onChange: (a: NonNullable<Field['ability']>) => void }) {
+  const a = { ...DEFAULT_ABILITY, ...field.ability }
+  const num = (key: 'base' | 'divisor' | 'offset', label: string) => (
+    <label className="cfg">
+      <span>{label}</span>
+      <input
+        className="input"
+        type="number"
+        value={a[key]}
+        onChange={(e) => {
+          const n = Number(e.target.value)
+          if (Number.isFinite(n) && !(key === 'divisor' && n === 0)) onChange({ ...a, [key]: n })
+        }}
+      />
+    </label>
+  )
+  return (
+    <div className="field-config">
+      <div className="cfg-row">
+        {num('base', 'Base')}
+        {num('divisor', 'Diviseur')}
+        <label className="cfg">
+          <span>Arrondi</span>
+          <select className="input" value={a.rounding} onChange={(e) => onChange({ ...a, rounding: e.target.value as Rounding })}>
+            <option value="floor">Inférieur</option>
+            <option value="round">Le plus proche</option>
+            <option value="ceil">Supérieur</option>
+          </select>
+        </label>
+        {num('offset', 'Bonus fixe')}
+      </div>
+      <div className="muted small">
+        Modificateur = arrondi((valeur − {a.base}) ÷ {a.divisor}){a.offset ? ` ${a.offset > 0 ? '+' : '−'} ${Math.abs(a.offset)}` : ''} · ex. 8 →{' '}
+        {formatModifier(abilityModifier(8, a))}, 10 → {formatModifier(abilityModifier(10, a))}, 15 → {formatModifier(abilityModifier(15, a))}, 18 →{' '}
+        {formatModifier(abilityModifier(18, a))}
+      </div>
+    </div>
+  )
+}
+
+function OptionsEditor({ options, onChange }: { options: string[]; onChange: (o: string[]) => void }) {
+  const [text, setText] = useState(options.join('\n'))
+  return (
+    <div className="field-config">
+      <label className="cfg wide">
+        <span>Choix proposés (un par ligne)</span>
+        <textarea
+          className="input"
+          rows={Math.min(8, Math.max(3, options.length + 1))}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            onChange(e.target.value.split('\n'))
+          }}
+        />
+      </label>
     </div>
   )
 }

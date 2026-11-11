@@ -4,3 +4,5 @@ release/
 dist-server/
 test-serveur/
 *.log
+installateurs/
+server.json

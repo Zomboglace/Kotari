@@ -175,6 +175,23 @@ export class LocalLibrary implements Library {
     this.set({ docs: [...this.state.docs, ...plan.docs.map((d) => d.meta)] })
   }
 
+  async search(query: string, ids?: string[]) {
+    await this.flush()
+    return window.kotari.search(query, ids)
+  }
+
+  getImage(hash: string) {
+    return window.kotari.readImage(hash)
+  }
+
+  putImage(hash: string, data: Uint8Array) {
+    return window.kotari.writeImage(hash, data)
+  }
+
+  missingImages(hashes: string[]) {
+    return hashes.length ? window.kotari.missingImages(hashes) : Promise.resolve([])
+  }
+
   /** Écrit tout ce qui est en attente (fermeture de la fenêtre, changement de projet). */
   async flush() {
     for (const [id, t] of this.metaTimers) {

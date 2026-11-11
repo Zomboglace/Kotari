@@ -2,6 +2,7 @@
 // en plus de la synchronisation Yjs gérée par Hocuspocus.
 
 import type { DocMeta, TypeDef } from './model'
+import type { SearchHit } from './search'
 
 export const TREE_ROOM = '__tree'
 export const docRoom = (id: string) => `doc:${id}`
@@ -16,10 +17,19 @@ export interface WireDoc {
 export type ClientMessage =
   | { kind: 'import'; requestId: string; docs: WireDoc[]; types: TypeDef[] }
   | { kind: 'export'; requestId: string; ids: string[] }
+  | { kind: 'search'; requestId: string; query: string; ids?: string[] }
+  | { kind: 'image-put'; requestId: string; hash: string; data: string }
+  | { kind: 'image-get'; requestId: string; hash: string }
+  | { kind: 'image-missing'; requestId: string; hashes: string[] }
 
-export type ServerMessage =
-  | { kind: 'import-done'; requestId: string; error?: string }
-  | { kind: 'export-done'; requestId: string; docs?: WireDoc[]; error?: string }
+export type ServerMessage = { requestId: string; error?: string } & (
+  | { kind: 'import-done' }
+  | { kind: 'export-done'; docs?: WireDoc[] }
+  | { kind: 'search-done'; hits?: SearchHit[] }
+  | { kind: 'image-put-done' }
+  | { kind: 'image-get-done'; data?: string | null }
+  | { kind: 'image-missing-done'; hashes?: string[] }
+)
 
 export interface AuthToken {
   password: string

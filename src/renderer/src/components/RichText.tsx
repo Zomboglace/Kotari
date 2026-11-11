@@ -1,23 +1,30 @@
-import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
+import { useEffect } from 'react'
+import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
+import { Placeholder } from '@tiptap/extensions'
 import type * as Y from 'yjs'
+import { fold } from '@shared/search'
+import { flash, registerFocus } from '../lib/focus'
 
 interface Props {
   fragment: Y.XmlFragment
   /** Fournisseur Hocuspocus : présent pour un document du serveur (curseurs). */
   provider: unknown | null
   user: { name: string; color: string } | null
-  placeholder?: string
+  focusKey?: string
   compact?: boolean
 }
 
-export function RichText({ fragment, provider, user, compact }: Props) {
+// Pas de barre d'outils : la mise en forme se fait au clavier, façon Markdown
+// (# titre, **gras**, *italique*, - liste, 1. liste, > citation) ou Ctrl+B / Ctrl+I.
+export function RichText({ fragment, provider, user, focusKey, compact }: Props) {
   const editor = useEditor(
     {
       extensions: [
         StarterKit.configure({ undoRedo: false, link: { openOnClick: false } }),
+        Placeholder.configure({ placeholder: compact ? '…' : 'Écris ici…' }),
         Collaboration.configure({ fragment }),
         ...(provider && user
           ? [
@@ -44,54 +51,48 @@ export function RichText({ fragment, provider, user, compact }: Props) {
     [fragment, provider]
   )
 
-  const s = useEditorState({
-    editor,
-    selector: ({ editor: e }) =>
-      e
-        ? {
-            bold: e.isActive('bold'),
-            italic: e.isActive('italic'),
-            strike: e.isActive('strike'),
-            h2: e.isActive('heading', { level: 2 }),
-            h3: e.isActive('heading', { level: 3 }),
-            ul: e.isActive('bulletList'),
-            ol: e.isActive('orderedList'),
-            quote: e.isActive('blockquote')
+  // Recherche : sélectionne la n-ième occurrence (cherchée bloc par bloc, comme l'index).
+  useEffect(() => {
+    if (!editor || !focusKey) return
+    return registerFocus(focusKey, (query, nth) => {
+      const q = fold(query.trim())
+      if (!q || editor.isDestroyed) return false
+      let count = 0
+      let found: { from: number; to: number } | null = null
+      editor.state.doc.descendants((node, pos) => {
+        if (found) return false
+        if (!node.isTextblock) return true
+        // Texte du bloc et position de chaque caractère dans le document.
+        let text = ''
+        const map: number[] = []
+        node.forEach((child, offset) => {
+          if (child.isText && child.text) {
+            for (let i = 0; i < child.text.length; i++) map.push(pos + 1 + offset + i)
+            text += child.text
           }
-        : null
-  })
+        })
+        const t = fold(text)
+        let i = t.indexOf(q)
+        while (i !== -1) {
+          if (count === nth) {
+            found = { from: map[i], to: map[i + q.length - 1] + 1 }
+            return false
+          }
+          count++
+          i = t.indexOf(q, i + q.length)
+        }
+        return false
+      })
+      if (!found) return false
+      editor.chain().focus().setTextSelection(found).scrollIntoView().run()
+      flash(editor.view.dom)
+      return true
+    })
+  }, [editor, focusKey])
 
   if (!editor) return null
-  const chain = () => editor.chain().focus()
-  const btn = (label: string, title: string, active: boolean | undefined, run: () => void, cls = '') => (
-    <button
-      type="button"
-      className={`tb ${active ? 'on' : ''} ${cls}`}
-      title={title}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={run}
-    >
-      {label}
-    </button>
-  )
-
   return (
     <div className={`richtext ${compact ? 'compact' : ''}`}>
-      <div className="toolbar">
-        {btn('G', 'Gras (Ctrl+B)', s?.bold, () => chain().toggleBold().run(), 'b')}
-        {btn('I', 'Italique (Ctrl+I)', s?.italic, () => chain().toggleItalic().run(), 'i')}
-        {btn('S', 'Barré', s?.strike, () => chain().toggleStrike().run(), 's')}
-        <span className="tb-sep" />
-        {btn('T1', 'Titre', s?.h2, () => chain().toggleHeading({ level: 2 }).run())}
-        {btn('T2', 'Sous-titre', s?.h3, () => chain().toggleHeading({ level: 3 }).run())}
-        <span className="tb-sep" />
-        {btn('•', 'Liste à puces', s?.ul, () => chain().toggleBulletList().run())}
-        {btn('1.', 'Liste numérotée', s?.ol, () => chain().toggleOrderedList().run())}
-        {btn('❝', 'Citation', s?.quote, () => chain().toggleBlockquote().run())}
-        <span className="tb-sep" />
-        {btn('↶', 'Annuler (Ctrl+Z)', false, () => chain().undo().run())}
-        {btn('↷', 'Rétablir (Ctrl+Y)', false, () => chain().redo().run())}
-      </div>
       <EditorContent editor={editor} />
     </div>
   )

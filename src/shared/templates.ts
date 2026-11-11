@@ -1,9 +1,11 @@
 // Modèles proposés en un clic. Les identifiants sont fixes : un Personnage créé
 // chez deux personnes a le même type, ce qui évite les doublons à la copie.
 
-import type { TypeDef } from './model'
+import type { Field, TypeDef } from './model'
+import { DEFAULT_ABILITY } from './model'
 
-const stat = (id: string, name: string) => ({ id, name, kind: 'number' as const })
+const ability = (id: string, name: string): Field => ({ id, name, kind: 'ability', ability: { ...DEFAULT_ABILITY } })
+const num = (id: string, name: string): Field => ({ id, name, kind: 'number' })
 
 export const TEMPLATES: TypeDef[] = [
   {
@@ -18,6 +20,7 @@ export const TEMPLATES: TypeDef[] = [
     order: 2,
     fields: [
       { id: 'region', name: 'Région', kind: 'text' },
+      { id: 'illustration', name: 'Illustration', kind: 'image' },
       { id: 'description', name: 'Description', kind: 'richtext' },
       {
         id: 'points-interet',
@@ -35,17 +38,34 @@ export const TEMPLATES: TypeDef[] = [
     name: 'Personnage',
     order: 3,
     fields: [
+      { id: 'portrait', name: 'Portrait', kind: 'image' },
       { id: 'race', name: 'Race', kind: 'text' },
       { id: 'classe', name: 'Classe', kind: 'text' },
-      stat('niveau', 'Niveau'),
-      stat('for', 'Force'),
-      stat('dex', 'Dextérité'),
-      stat('con', 'Constitution'),
-      stat('int', 'Intelligence'),
-      stat('sag', 'Sagesse'),
-      stat('cha', 'Charisme'),
-      stat('pv', 'Points de vie'),
-      stat('ca', "Classe d'armure"),
+      {
+        id: 'alignement',
+        name: 'Alignement',
+        kind: 'select',
+        options: [
+          'Loyal bon',
+          'Neutre bon',
+          'Chaotique bon',
+          'Loyal neutre',
+          'Neutre',
+          'Chaotique neutre',
+          'Loyal mauvais',
+          'Neutre mauvais',
+          'Chaotique mauvais'
+        ]
+      },
+      num('niveau', 'Niveau'),
+      ability('for', 'Force'),
+      ability('dex', 'Dextérité'),
+      ability('con', 'Constitution'),
+      ability('int', 'Intelligence'),
+      ability('sag', 'Sagesse'),
+      ability('cha', 'Charisme'),
+      { id: 'pv', name: 'Points de vie', kind: 'gauge' },
+      num('ca', "Classe d'armure"),
       { id: 'histoire', name: 'Histoire', kind: 'richtext' }
     ]
   },
@@ -54,20 +74,18 @@ export const TEMPLATES: TypeDef[] = [
     name: 'Inventaire',
     order: 4,
     fields: [
-      stat('po', "Pièces d'or"),
+      num('po', "Pièces d'or"),
       {
         id: 'objets',
         name: 'Objets',
         kind: 'list',
         subfields: [
           { id: 'nom', name: 'Nom', kind: 'text' },
-          { id: 'quantite', name: 'Quantité', kind: 'number' },
+          num('quantite', 'Quantité'),
+          { id: 'equipe', name: 'Équipé', kind: 'checkbox' },
           { id: 'description', name: 'Description', kind: 'richtext' }
         ]
       }
     ]
   }
 ]
-
-/** Les caractéristiques D&D affichent leur modificateur à côté de la valeur. */
-export const ABILITY_FIELD_IDS = new Set(['for', 'dex', 'con', 'int', 'sag', 'cha'])

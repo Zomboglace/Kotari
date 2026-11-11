@@ -9,6 +9,8 @@ import { isDocMeta, isSafeId, isTypeDef, pickMeta } from '../shared/model'
 import type { AuthToken, ClientMessage, ServerMessage, WireDoc } from '../shared/protocol'
 import { TREE_ROOM, docRoom, fromBase64, roomDocId, toBase64 } from '../shared/protocol'
 import { verifyPassword } from './password'
+import { isImageHash } from '../shared/images'
+import { searchDocs, type SearchHit } from '../shared/search'
 
 export interface ServerOptions {
   dir: string
@@ -155,6 +157,19 @@ export async function startServer(opts: ServerOptions) {
     return out
   }
 
+  async function handleSearch(msg: Extract<ClientMessage, { kind: 'search' }>): Promise<SearchHit[]> {
+    const doc = treeDoc()
+    if (!doc || typeof msg.query !== 'string' || !msg.query.trim()) return []
+    const dm = doc.getMap<DocMeta>('docs')
+    const types = [...doc.getMap<TypeDef>('types').values()].filter(isTypeDef)
+    let docs = [...dm.values()].filter(isDocMeta).map(pickMeta)
+    if (Array.isArray(msg.ids)) {
+      const want = new Set(msg.ids)
+      docs = docs.filter((d) => want.has(d.id))
+    }
+    return searchDocs(docs, types, contentOf, msg.query.slice(0, 200))
+  }
+
   const server = new Server<Ctx>({
     port: opts.port,
     address: opts.host ?? '0.0.0.0',
@@ -218,21 +233,34 @@ export async function startServer(opts: ServerOptions) {
       }
       const who = (connection.context as Ctx | undefined)?.name ?? 'Quelqu’un'
       let reply: ServerMessage
+      const requestId = typeof msg?.requestId === 'string' ? msg.requestId : ''
+      const doneKind = `${msg?.kind}-done` as ServerMessage['kind']
       try {
         if (msg.kind === 'import') {
           await handleImport(msg, who)
-          reply = { kind: 'import-done', requestId: msg.requestId }
+          reply = { kind: 'import-done', requestId }
         } else if (msg.kind === 'export') {
-          reply = { kind: 'export-done', requestId: msg.requestId, docs: await handleExport(msg) }
+          reply = { kind: 'export-done', requestId, docs: await handleExport(msg) }
+        } else if (msg.kind === 'search') {
+          reply = { kind: 'search-done', requestId, hits: await handleSearch(msg) }
+        } else if (msg.kind === 'image-put') {
+          if (typeof msg.data !== 'string') throw new Error('Image invalide.')
+          await store.writeImage(msg.hash, fromBase64(msg.data))
+          reply = { kind: 'image-put-done', requestId }
+        } else if (msg.kind === 'image-get') {
+          const data = await store.readImage(msg.hash)
+          reply = { kind: 'image-get-done', requestId, data: data ? toBase64(data) : null }
+        } else if (msg.kind === 'image-missing') {
+          const hashes = Array.isArray(msg.hashes) ? msg.hashes.slice(0, 2000) : []
+          const missing: string[] = []
+          for (const h of hashes) if (isImageHash(h) && !(await store.hasImage(h))) missing.push(h)
+          reply = { kind: 'image-missing-done', requestId, hashes: missing }
         } else {
           return
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err)
-        reply =
-          msg.kind === 'import'
-            ? { kind: 'import-done', requestId: msg.requestId, error }
-            : { kind: 'export-done', requestId: msg.requestId, error }
+        reply = { kind: doneKind, requestId, error } as ServerMessage
       }
       connection.sendStateless(JSON.stringify(reply))
     },

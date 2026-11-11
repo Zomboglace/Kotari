@@ -22,7 +22,7 @@ export default defineConfig({
         transformIndexHtml(html, ctx) {
           const csp = ctx.server
             ? ''
-            : `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:" />`
+            : `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:" />`
           return html.replace('<!--KOTARI_CSP-->', csp)
         }
       }

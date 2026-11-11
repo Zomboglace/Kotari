@@ -5,7 +5,7 @@ import type { DocMeta, TypeDef } from '@shared/model'
 import { isDocMeta, isTypeDef, newId, pickMeta } from '@shared/model'
 import type { AuthToken, ClientMessage, ServerMessage } from '@shared/protocol'
 import { TREE_ROOM, docRoom, fromBase64, toBase64 } from '@shared/protocol'
-import { initialContent } from '@shared/content'
+import type { SearchHit } from '@shared/search'
 import { Emitter, type Library, type LibraryState, type OpenedDoc } from './library'
 
 export interface ConnectOptions {
@@ -31,7 +31,7 @@ export function colorFor(name: string): string {
   return COLORS[Math.abs(h) % COLORS.length]
 }
 
-const REQUEST_TIMEOUT = 30_000
+const REQUEST_TIMEOUT = 60_000
 
 /**
  * Bibliothèque hébergée par kotari-server.
@@ -255,8 +255,25 @@ export class ServerLibrary implements Library {
     })
   }
 
-  /** Utilisé pour créer une fiche vide côté serveur. */
-  static emptyContent = initialContent
+  async search(query: string, ids?: string[]): Promise<SearchHit[]> {
+    const res = await this.request({ kind: 'search', requestId: newId(), query, ids })
+    return res.kind === 'search-done' ? (res.hits ?? []) : []
+  }
+
+  async getImage(hash: string): Promise<Uint8Array | null> {
+    const res = await this.request({ kind: 'image-get', requestId: newId(), hash })
+    return res.kind === 'image-get-done' && res.data ? fromBase64(res.data) : null
+  }
+
+  async putImage(hash: string, data: Uint8Array): Promise<void> {
+    await this.request({ kind: 'image-put', requestId: newId(), hash, data: toBase64(data) })
+  }
+
+  async missingImages(hashes: string[]): Promise<string[]> {
+    if (!hashes.length) return []
+    const res = await this.request({ kind: 'image-missing', requestId: newId(), hashes })
+    return res.kind === 'image-missing-done' ? (res.hashes ?? []) : hashes
+  }
 
   destroy() {
     if (this.destroyed) return
