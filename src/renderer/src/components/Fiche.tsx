@@ -14,12 +14,15 @@ import { SubGrid } from './SubGrid'
 interface Props {
   lib: Library
   id: string
-  onOpen: (id: string) => void
+  /** Ouvre une autre fiche dans ce panneau (newTab : dans un nouvel onglet, Ctrl+clic). */
+  onOpen: (id: string, newTab?: boolean) => void
+  /** Panneau actif : reçoit Ctrl+F. */
+  active?: boolean
   onAddChild: (parentId: string) => void
   onDelete: (id: string) => void
 }
 
-export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
+export function Fiche({ lib, id, onOpen, onAddChild, onDelete, active = true }: Props) {
   const { docs, types } = useLibraryState(lib)
   const meta = docs.find((d) => d.id === id)
   const type = types.find((t) => t.id === meta?.typeId)
@@ -31,6 +34,7 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
 
   // Ctrl+F : recherche dans la fiche.
   useEffect(() => {
+    if (!active) return
     const h = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
@@ -40,7 +44,7 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [])
+  }, [active])
 
   const ancestors = useMemo(() => {
     const out = []
@@ -80,7 +84,7 @@ export function Fiche({ lib, id, onOpen, onAddChild, onDelete }: Props) {
           <span className={`lib-tag ${lib.kind}`}>{lib.kind === 'server' ? 'Serveur' : 'Local'}</span>
           {ancestors.map((a) => (
             <span key={a.id}>
-              <button className="crumb" onClick={() => onOpen(a.id)}>
+              <button className="crumb" onClick={(e) => onOpen(a.id, e.ctrlKey)} onAuxClick={(e) => e.button === 1 && onOpen(a.id, true)}>
                 {a.title || 'Sans titre'}
               </button>
               <span className="crumb-sep">›</span>

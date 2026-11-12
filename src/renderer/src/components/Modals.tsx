@@ -376,6 +376,9 @@ export function SettingsModal({
         <tbody>
           <tr><td>Ctrl+F</td><td>Rechercher dans la fiche (et ses sous-fiches)</td></tr>
           <tr><td>Ctrl+Maj+F</td><td>Rechercher dans tout le projet et sur le serveur</td></tr>
+          <tr><td>Ctrl+W · clic molette</td><td>Fermer l'onglet</td></tr>
+          <tr><td>Ctrl+clic sur un lien</td><td>Ouvrir dans un nouvel onglet</td></tr>
+          <tr><td>Glisser une fiche sur un bord</td><td>L'afficher à côté (gauche, droite, haut, bas)</td></tr>
         </tbody>
       </table>
       <div className="modal-actions">

@@ -19,8 +19,10 @@ import { ConfirmModal, ConnectModal, NewDocModal, SettingsModal, type ConnectIni
 import { GlobalSearch } from './components/Search'
 import { Tree, type DragSource, type DropPos } from './components/Tree'
 import { TypesScreen } from './components/TypesScreen'
+import { Workspace, type TabLabel, type Zone } from './components/Workspace'
+import * as ws from './lib/workspace'
+import type { View, WsNode } from './lib/workspace'
 
-type View = { kind: 'home' } | { kind: 'doc'; lib: LibraryKind; id: string } | { kind: 'types'; lib: LibraryKind }
 
 type ModalState =
   | { kind: 'new-doc'; lib: LibraryKind; parentId: string | null }
@@ -69,7 +71,34 @@ function dropTarget(docs: DocMeta[], dragId: string | null, refId: string | null
 export function App() {
   const [local, setLocal] = useState<LocalLibrary | null>(null)
   const [server, setServer] = useState<ServerLibrary | null>(null)
-  const [view, setView] = useState<View>({ kind: 'home' })
+  // Panneaux et onglets.
+  const [root, setRoot] = useState<WsNode>(() => ws.newPane())
+  const [focused, setFocused] = useState<string>(() => (root as ws.PaneNode).id)
+  const rootRef = useRef(root)
+  rootRef.current = root
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  /** Panneau actif (celui qui a le focus, ou le premier). */
+  const focusPane = () => ws.findPane(rootRef.current, focusedRef.current) ?? ws.panes(rootRef.current)[0]
+  const updateRoot = (f: (r: WsNode) => WsNode) => {
+    const next = f(rootRef.current)
+    rootRef.current = next
+    setRoot(next)
+    if (!ws.findPane(next, focusedRef.current)) {
+      const first = ws.panes(next)[0]
+      focusedRef.current = first.id
+      setFocused(first.id)
+    }
+  }
+  const focusOn = (id: string) => {
+    focusedRef.current = id
+    setFocused(id)
+  }
+  const openView = (v: View, mode: 'tab' | 'replace' = 'tab') => updateRoot((r) => ws.openIn(r, focusPane().id, v, mode))
+  const goHome = () => updateRoot((r) => ws.activate(r, focusPane().id, null))
+  const dropViews = (pred: (v: View) => boolean) => updateRoot((r) => ws.dropViews(r, pred))
+  const currentPane = ws.findPane(root, focused) ?? ws.panes(root)[0]
+  const currentView = currentPane.tabs.find((t) => t.key === currentPane.active)?.view ?? null
   const [modal, setModal] = useState<ModalState | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [filter, setFilter] = useState('')
@@ -172,7 +201,7 @@ export function App() {
     lib.onError = (m) => ui.toast(m, 'error')
     setLocal(lib)
     rememberRecent(snap)
-    setView((v) => (v.kind === 'doc' && v.lib === 'server' ? v : { kind: 'home' }))
+    dropViews((v) => v.lib === 'local')
   }
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -187,7 +216,7 @@ export function App() {
     await local?.flush()
     await window.kotari.closeProject()
     setLocal(null)
-    setView((v) => (v.kind === 'doc' && v.lib === 'server' ? v : { kind: 'home' }))
+    dropViews((v) => v.lib === 'local')
   }
 
   // ---------- Serveur ----------
@@ -204,7 +233,7 @@ export function App() {
     void refreshServers()
     lib.onLost = (reason) => {
       setServer(null)
-      setView((v) => (v.kind !== 'home' && v.lib === 'server' ? { kind: 'home' } : v))
+      dropViews((v) => v.lib === 'server')
       ui.toast(reason, 'error')
     }
     setServer(lib)
@@ -233,14 +262,14 @@ export function App() {
 
   const pickSearchHit = (kind: LibraryKind, hit: SearchHit, query: string) => {
     setModal(null)
-    setView({ kind: 'doc', lib: kind, id: hit.docId })
+    openView({ kind: 'doc', lib: kind, id: hit.docId })
     setTimeout(() => requestFocus(focusKey(hit.docId, hit.path), query, hit.nth), 0)
   }
 
   const disconnect = () => {
     server?.destroy()
     setServer(null)
-    setView((v) => (v.kind !== 'home' && v.lib === 'server' ? { kind: 'home' } : v))
+    dropViews((v) => v.lib === 'server')
   }
 
   useEffect(() => () => serverRef.current?.destroy(), [])
@@ -257,7 +286,7 @@ export function App() {
     const meta: DocMeta = { id: newId(), title, typeId, parentId, order: orderAt(siblings, siblings.length) }
     await lib.createDoc(meta, initialContent(type))
     setModal(null)
-    setView({ kind: 'doc', lib: k, id: meta.id })
+    openView({ kind: 'doc', lib: k, id: meta.id })
   }
 
   const deleteDoc = async (k: LibraryKind, id: string) => {
@@ -277,7 +306,8 @@ export function App() {
     if (!ok) return
     await run(async () => {
       await lib.deleteDocs(tree.map((d) => d.id).reverse())
-      setView((v) => (v.kind === 'doc' && v.lib === k && tree.some((d) => d.id === v.id) ? { kind: 'home' } : v))
+      const gone = new Set(tree.map((d) => d.id))
+      dropViews((v) => v.kind === 'doc' && v.lib === k && gone.has(v.id))
     })
   }
 
@@ -326,44 +356,44 @@ export function App() {
   const sidebar = (k: LibraryKind, lib: Library) => (
     <Tree
       lib={lib}
-      selectedId={view.kind === 'doc' && view.lib === k ? view.id : null}
+      selectedId={currentView?.kind === 'doc' && currentView.lib === k ? currentView.id : null}
       filter={filter}
-      onSelect={(id) => setView({ kind: 'doc', lib: k, id })}
+      onSelect={(id) => openView({ kind: 'doc', lib: k, id })}
       onAdd={(parentId) => setModal({ kind: 'new-doc', lib: k, parentId })}
       onDelete={(id) => void deleteDoc(k, id)}
       onDrop={(src, refId, pos) => void handleDrop(k, src, refId, pos)}
     />
   )
 
-  let main: React.ReactNode
-  if (view.kind === 'doc' && libOf(view.lib)) {
-    const lib = libOf(view.lib)!
-    main = (
+  const renderView = (v: View, paneId: string, active: boolean): React.ReactNode => {
+    const lib = libOf(v.lib)
+    if (!lib) return null
+    if (v.kind === 'types') return <TypesScreen key={`types:${v.lib}`} libs={libs} initial={v.lib} />
+    return (
       <Fiche
-        key={`${view.lib}:${view.id}`}
+        key={`${v.lib}:${v.id}`}
         lib={lib}
-        id={view.id}
-        onOpen={(id) => setView({ kind: 'doc', lib: view.lib, id })}
-        onAddChild={(parentId) => setModal({ kind: 'new-doc', lib: view.lib, parentId })}
-        onDelete={(id) => void deleteDoc(view.lib, id)}
+        id={v.id}
+        active={active}
+        onOpen={(id, newTab) => updateRoot((r) => ws.openIn(r, paneId, { kind: 'doc', lib: v.lib, id }, newTab ? 'tab' : 'replace'))}
+        onAddChild={(parentId) => setModal({ kind: 'new-doc', lib: v.lib, parentId })}
+        onDelete={(id) => void deleteDoc(v.lib, id)}
       />
     )
-  } else if (view.kind === 'types' && (local || server)) {
-    main = <TypesScreen libs={libs} initial={view.lib} />
-  } else if (local) {
-    main = (
+  }
+
+  const renderHome = (): React.ReactNode =>
+    local ? (
       <ProjectHome
         name={local.label}
         docCount={localState.docs.length}
         typeCount={localState.types.length}
         connected={!!server}
         onNew={() => setModal({ kind: 'new-doc', lib: 'local', parentId: null })}
-        onTypes={() => setView({ kind: 'types', lib: 'local' })}
+        onTypes={() => openView({ kind: 'types', lib: 'local' })}
         onReveal={() => void window.kotari.revealProject()}
       />
-    )
-  } else {
-    main = (
+    ) : (
       <Welcome
         recents={recents}
         connected={!!server}
@@ -378,7 +408,64 @@ export function App() {
         onConnect={() => setModal({ kind: 'connect' })}
       />
     )
+
+  const tabLabel = (v: View): TabLabel => {
+    const st = v.lib === 'local' ? localState : serverState
+    if (v.kind === 'types') return { title: `Types · ${v.lib === 'local' ? 'local' : 'serveur'}`, lib: v.lib }
+    const d = st.docs.find((x) => x.id === v.id)
+    return d ? { title: d.title || 'Sans titre', lib: v.lib } : { title: 'Supprimée', lib: v.lib, missing: true }
   }
+
+  const onPaneDrop = (paneId: string, zone: Zone, v: View, fromTab: { pane: string; key: string } | null, index?: number) => {
+    if (zone === 'center') {
+      updateRoot((r) => {
+        if (fromTab) return ws.moveTab(r, fromTab.pane, fromTab.key, paneId, index)
+        const next = ws.openIn(r, paneId, v, 'tab')
+        // Dépôt sur la barre d'onglets : à la position visée.
+        return index === undefined ? next : ws.moveTab(next, paneId, ws.viewKey(v), paneId, index)
+      })
+      focusOn(paneId)
+      return
+    }
+    let created = ''
+    updateRoot((r) => {
+      // Un onglet glissé hors de son panneau le quitte ; une fiche de l'arbre s'ouvre en plus.
+      const base = fromTab && !(fromTab.pane === paneId && ws.findPane(r, paneId)!.tabs.length === 1) ? ws.closeTab(r, fromTab.pane, fromTab.key) : r
+      const target = ws.findPane(base, paneId) ? paneId : ws.panes(base)[0].id
+      const res = ws.splitWith(base, target, zone, v)
+      created = res.paneId
+      return res.root
+    })
+    if (created) focusOn(created)
+  }
+
+  // Ctrl+W : ferme l'onglet du panneau actif.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault()
+        const p = focusPane()
+        if (p.active) updateRoot((r) => ws.closeTab(r, p.id, p.active!))
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  })
+
+  const main = (
+    <Workspace
+      root={root}
+      focused={focused}
+      onFocus={(id) => id !== focusedRef.current && focusOn(id)}
+      renderView={renderView}
+      renderHome={renderHome}
+      tabLabel={tabLabel}
+      onActivate={(paneId, key) => updateRoot((r) => ws.activate(r, paneId, key))}
+      onClose={(paneId, key) => updateRoot((r) => ws.closeTab(r, paneId, key))}
+      onDrop={onPaneDrop}
+      onRatio={(id, ratio) => updateRoot((r) => ws.setRatio(r, id, ratio))}
+    />
+  )
 
   const searchLibs = useMemo(
     () => [...(local ? [{ kind: 'local' as const, lib: local as Library }] : []), ...(server ? [{ kind: 'server' as const, lib: server as Library }] : [])],
@@ -393,7 +480,7 @@ export function App() {
       <div className="app">
         <aside className="sidebar">
           <div className="brand-row">
-            <div className="brand" onClick={() => setView({ kind: 'home' })} title="Accueil">
+            <div className="brand" onClick={goHome} title="Accueil">
               Kotari
             </div>
             {(local || server) && (
@@ -429,7 +516,7 @@ export function App() {
                   >
                     +
                   </button>
-                  <button className="btn ghost tiny" onClick={() => setView({ kind: 'types', lib: 'local' })}>
+                  <button className="btn ghost tiny" onClick={() => openView({ kind: 'types', lib: 'local' })}>
                     Types
                   </button>
                   <button className="btn ghost tiny" title="Fermer le projet" onClick={() => void closeProject()}>
@@ -458,7 +545,7 @@ export function App() {
                     ))}
                   </ul>
                 )}
-                <button className="btn small" onClick={() => setView({ kind: 'home' })}>
+                <button className="btn small" onClick={goHome}>
                   Ouvrir ou créer un projet…
                 </button>
               </div>
@@ -495,7 +582,7 @@ export function App() {
                   >
                     +
                   </button>
-                  <button className="btn ghost tiny" onClick={() => setView({ kind: 'types', lib: 'server' })}>
+                  <button className="btn ghost tiny" onClick={() => openView({ kind: 'types', lib: 'server' })}>
                     Types
                   </button>
                   <button className="btn ghost tiny" onClick={disconnect}>
@@ -583,7 +670,7 @@ export function App() {
             onCreate={(typeId, title) => createDoc(modal.lib, modal.parentId, typeId, title)}
             onManageTypes={() => {
               setModal(null)
-              setView({ kind: 'types', lib: modal.lib })
+              openView({ kind: 'types', lib: modal.lib })
             }}
             onClose={() => setModal(null)}
           />

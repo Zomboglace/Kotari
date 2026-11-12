@@ -16,13 +16,19 @@ interface Props {
   parentId: string
   docs: DocMeta[]
   types: TypeDef[]
-  onOpen: (id: string) => void
+  onOpen: (id: string, newTab?: boolean) => void
   onDelete: (id: string) => void
 }
 
 type DropTarget = { row: number; index: number } | { newRow: number } | null
 
 const CARD_MIME = 'application/x-kotari-card'
+
+// Carte en cours de glisser : peut aussi être déposée sur un bord de panneau pour l'ouvrir à côté.
+let cardDrag: { lib: Library['kind']; id: string } | null = null
+export function getCardDrag() {
+  return cardDrag
+}
 
 /** Sous-fiches affichées en cartes éditables, rangées en lignes (disposition partagée). */
 export function SubGrid({ lib, parentDoc, parentId, docs, types, onOpen, onDelete }: Props) {
@@ -179,10 +185,12 @@ export function SubGrid({ lib, parentDoc, parentId, docs, types, onOpen, onDelet
                       onDelete={onDelete}
                       onDragStart={(e) => {
                         e.dataTransfer.setData(CARD_MIME, id)
+                        cardDrag = { lib: lib.kind, id }
                         e.dataTransfer.effectAllowed = 'move'
                         setDragId(id)
                       }}
                       onDragEnd={() => {
+                        cardDrag = null
                         setDragId(null)
                         setTarget(null)
                       }}
@@ -244,7 +252,7 @@ function ChildCard({
   docs: DocMeta[]
   types: TypeDef[]
   height: number
-  onOpen: (id: string) => void
+  onOpen: (id: string, newTab?: boolean) => void
   onDelete: (id: string) => void
   onDragStart: (e: React.DragEvent) => void
   onDragEnd: () => void
@@ -269,7 +277,12 @@ function ChildCard({
           onChange={(e) => lib.updateMeta(meta.id, { title: e.target.value })}
         />
         <span className="type-pill small">{type?.name ?? '?'}</span>
-        <button className="icon-btn" title="Ouvrir la fiche" onClick={() => onOpen(meta.id)}>
+        <button
+          className="icon-btn"
+          title="Ouvrir la fiche (Ctrl+clic : nouvel onglet ; ou glisser la poignée ⠿ vers un bord pour l'ouvrir à côté)"
+          onClick={(e) => onOpen(meta.id, e.ctrlKey)}
+          onAuxClick={(e) => e.button === 1 && onOpen(meta.id, true)}
+        >
           ↗
         </button>
         <button className="icon-btn danger" title="Supprimer" onClick={() => onDelete(meta.id)}>
@@ -291,7 +304,7 @@ function ChildCard({
         {grandChildren.length > 0 && (
           <div className="card-children">
             {grandChildren.map((g) => (
-              <button key={g.id} className="chip" onClick={() => onOpen(g.id)}>
+              <button key={g.id} className="chip" onClick={(e) => onOpen(g.id, e.ctrlKey)} onAuxClick={(e) => e.button === 1 && onOpen(g.id, true)}>
                 {g.title || 'Sans titre'}
                 <span className="muted"> · {types.find((t) => t.id === g.typeId)?.name}</span>
               </button>

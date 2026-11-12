@@ -131,8 +131,9 @@ h3 {
   width: calc(100% - 24px);
 }
 .main {
-  overflow: auto;
+  overflow: hidden;
   min-width: 0;
+  display: flex;
 }
 
 .lib-section {
@@ -1674,4 +1675,230 @@ body.resizing-v {
 }
 .editor-actions {
   flex-wrap: wrap;
+}
+
+/* ================= Panneaux et onglets ================= */
+.ws-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.ws-split.row {
+  flex-direction: row;
+}
+.ws-split.column {
+  flex-direction: column;
+}
+.ws-cell {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.ws-gutter {
+  flex: none;
+  background: var(--line);
+  position: relative;
+  z-index: 4;
+}
+.ws-gutter.row {
+  width: 1px;
+  cursor: ew-resize;
+}
+.ws-gutter.column {
+  height: 1px;
+  cursor: ns-resize;
+}
+.ws-gutter::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+.ws-gutter:hover,
+body.resizing-h .ws-gutter.row,
+body.resizing-v .ws-gutter.column {
+  background: var(--accent);
+}
+body.resizing-h {
+  cursor: ew-resize;
+  user-select: none;
+}
+.ws-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.ws-tabs {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 8px 0;
+  min-height: 37px;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.ws-tab {
+  position: relative;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 70px;
+  max-width: 210px;
+  padding: 6px 4px 6px 10px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.ws-tab:hover {
+  background: var(--hover);
+}
+.ws-tab.on {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--text);
+  margin-bottom: -1px;
+  padding-bottom: 7px;
+}
+.ws-pane.focused .ws-tab.on {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.ws-tab.missing .ws-tab-title {
+  text-decoration: line-through;
+}
+.ws-tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ws-tab-dot.server {
+  background: var(--server);
+}
+.ws-tab-close {
+  flex: none;
+  border: none;
+  background: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  visibility: hidden;
+  line-height: 1;
+}
+.ws-tab:hover .ws-tab-close,
+.ws-tab.on .ws-tab-close {
+  visibility: visible;
+}
+.ws-tab-close:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.ws-tab.drop-before::before,
+.ws-tab.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.ws-tab.drop-before::before {
+  left: -2px;
+}
+.ws-tab.drop-after::after {
+  right: -2px;
+}
+.ws-tab-new {
+  flex: none;
+  border: none;
+  background: none;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 3px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 16px;
+}
+.ws-tab-new:hover,
+.ws-tab-new.on {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.ws-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.ws-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+.ws-drop-preview {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  transition: all 0.12s ease;
+}
+.ws-drop-preview span {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.ws-drop-preview.center {
+  inset: 8px;
+}
+.ws-drop-preview.left {
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: calc(50% - 12px);
+}
+.ws-drop-preview.right {
+  top: 8px;
+  bottom: 8px;
+  right: 8px;
+  width: calc(50% - 12px);
+}
+.ws-drop-preview.top {
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  height: calc(50% - 12px);
+}
+.ws-drop-preview.bottom {
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: calc(50% - 12px);
 }

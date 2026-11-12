@@ -144,6 +144,11 @@ export function ProjectHome({
         ) : (
           <li>Connecte-toi à un serveur pour partager des fiches et les éditer à plusieurs en temps réel.</li>
         )}
+        <li>
+          Glisse une fiche de l’arbre sur la zone principale : au centre elle s’ouvre dans un onglet, sur un bord elle
+          s’affiche à côté de la fiche actuelle (gauche, droite, haut ou bas). Les onglets se glissent de la même façon.
+        </li>
+        <li>Ctrl+W ferme l’onglet, clic molette aussi ; Ctrl+clic sur un lien ouvre un nouvel onglet.</li>
         <li>Tout est enregistré automatiquement.</li>
       </ul>
     </div>

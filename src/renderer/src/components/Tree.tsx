@@ -14,6 +14,13 @@ export interface DragSource {
 // Un seul glisser à la fois dans l'app : état partagé entre les deux arbres.
 let currentDrag: DragSource | null = null
 const dragListeners = new Set<(d: DragSource | null) => void>()
+/** Fiche en cours de glisser depuis un arbre (pour la déposer dans un panneau). */
+export function getTreeDrag(): DragSource | null {
+  return currentDrag
+}
+export function endTreeDrag() {
+  setDrag(null)
+}
 function setDrag(d: DragSource | null) {
   currentDrag = d
   for (const l of dragListeners) l(d)
