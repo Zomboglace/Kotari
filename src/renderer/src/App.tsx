@@ -12,7 +12,7 @@ import { loadPref, savePref, UiContext, type UiApi } from './lib/hooks'
 import type { Library, LibraryKind } from './lib/library'
 import { useLibraryState } from './lib/library'
 import { LocalLibrary } from './lib/localLibrary'
-import { ServerLibrary, type ConnectOptions } from './lib/serverLibrary'
+import { ServerLibrary, serverLabel, type ConnectOptions } from './lib/serverLibrary'
 import { Fiche } from './components/Fiche'
 import { ProjectHome, Welcome, type RecentProject } from './components/Home'
 import { ConfirmModal, ConnectModal, NewDocModal, SettingsModal, type ConnectInitial } from './components/Modals'
@@ -77,6 +77,11 @@ export function App() {
   const [savedServers, setSavedServers] = useState<SavedServerInfo[]>([])
   const [connecting, setConnecting] = useState<string | null>(null)
   const [theme, setTheme] = useState<ThemeSettings>(loadTheme)
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  useEffect(() => {
+    void window.kotari.updateStatus().then((v) => v && setUpdateVersion(v))
+    window.kotari.onUpdateReady(setUpdateVersion)
+  }, [])
   const themeRef = useRef(theme)
   themeRef.current = theme
 
@@ -172,7 +177,7 @@ export function App() {
     const lib = await ServerLibrary.connect(opts)
     await window.kotari
       .rememberServer(
-        { host: opts.host, port: opts.port, name: opts.name },
+        { host: opts.host, port: opts.port, secure: !!opts.secure, name: opts.name },
         rememberPassword === 'keep' ? undefined : rememberPassword ? opts.password : null
       )
       .catch(() => {})
@@ -188,12 +193,12 @@ export function App() {
   }
 
   const quickConnect = async (s: SavedServerInfo) => {
-    const initial: ConnectInitial = { host: s.host, port: s.port, name: s.name }
+    const initial: ConnectInitial = { host: s.host, port: s.port, secure: !!s.secure, name: s.name }
     const password = s.hasPassword ? await window.kotari.serverPassword(s.id) : null
     if (password === null) return setModal({ kind: 'connect', initial })
     setConnecting(s.id)
     try {
-      await connect({ host: s.host, port: s.port, name: s.name, password })
+      await connect({ host: s.host, port: s.port, secure: !!s.secure, name: s.name, password })
     } catch (e) {
       setModal({ kind: 'connect', initial: { ...initial, error: errMsg(e) } })
     } finally {
@@ -497,7 +502,8 @@ export function App() {
                           onClick={() => void quickConnect(sv)}
                         >
                           <span className="side-recent-name">
-                            {sv.host}:{sv.port}
+                            {serverLabel(sv.host, sv.port, !!sv.secure)}
+                            {sv.secure && <span className="muted small"> · HTTPS</span>}
                             {connecting === sv.id && <span className="muted small"> · connexion…</span>}
                           </span>
                           <span className="muted small side-recent-sub">
@@ -518,6 +524,20 @@ export function App() {
               </div>
             )}
           </div>
+          {updateVersion && (
+            <div className="update-banner">
+              <span>Kotari {updateVersion} est prête.</span>
+              <button
+                className="btn primary small"
+                onClick={async () => {
+                  await localRef.current?.flush()
+                  await window.kotari.installUpdate()
+                }}
+              >
+                Redémarrer
+              </button>
+            </div>
+          )}
         </aside>
 
         <main className="main">{main}</main>

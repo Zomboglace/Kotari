@@ -50,10 +50,25 @@ sudo systemctl enable --now kotari-server
 journalctl -u kotari-server -f     # voir le journal
 ```
 
+## Serveur sur Internet (VPS : Hetzner, OVH…)
+
+Le plus simple : le script `install-serveur.sh` (joint à chaque release) installe tout
+sur Ubuntu/Debian — Node 22, kotari-server, Caddy (HTTPS automatique), pare-feu,
+démarrage automatique :
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Zomboglace/Kotari/main/deploy/install-serveur.sh -o install-serveur.sh
+sudo bash install-serveur.sh kotari.mondomaine.fr
+```
+
+Avant : créer chez le fournisseur du domaine un enregistrement DNS **A** qui pointe
+le sous-domaine vers l'IP du serveur. Dans Kotari : adresse `kotari.mondomaine.fr`,
+port 443, « Connexion sécurisée » cochée. Relancer le script met le serveur à jour.
+
 ## Réseau et sécurité
 
-- Version 1 : **réseau local uniquement**. N'ouvre pas ce port sur ta box :
-  la connexion n'est pas chiffrée.
+- Sans HTTPS, la connexion n'est pas chiffrée : réseau local uniquement, n'ouvre pas
+  ce port sur ta box. Sur Internet, passe par Caddy (voir ci-dessus) ou Tailscale.
 - Pour jouer avec quelqu'un qui n'est pas chez toi : installe
   [Tailscale](https://tailscale.com) sur la machine serveur et sur chaque PC,
   puis utilise l'adresse Tailscale du serveur (100.x.y.z) dans Kotari.

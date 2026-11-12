@@ -14,10 +14,14 @@ import { TEMPLATES } from '../shared/templates'
 import { hashPassword } from './password'
 import { startServer, timestamp } from './server'
 
+declare const __KOTARI_VERSION__: string
+const VERSION = typeof __KOTARI_VERSION__ === 'string' ? __KOTARI_VERSION__ : 'dev'
 const DEFAULT_PORT = 4321
 
 interface ServerConfig {
   port: number
+  /** Adresse d'écoute : 0.0.0.0 (réseau) ou 127.0.0.1 (derrière Caddy). */
+  host?: string
   passwordHash: string
 }
 
@@ -32,6 +36,7 @@ Utilisation :
 
 Options de init (pour éviter les questions) :
   --port <n>          port d'écoute (défaut ${DEFAULT_PORT})
+  --host <adresse>    adresse d'écoute (défaut 0.0.0.0 ; 127.0.0.1 derrière un proxy HTTPS)
   --password <texte>  mot de passe
   --name <texte>      nom du projet s'il est créé
   --templates         ajoute les modèles Note, Lieu, Personnage, Inventaire`)
@@ -142,8 +147,9 @@ async function cmdInit(dir: string, flags: Record<string, string | true>) {
     process.exit(1)
   }
 
+  const host = typeof flags.host === 'string' ? flags.host : undefined
   const password = typeof flags.password === 'string' ? flags.password : await askPassword()
-  await writeConfig(dir, { port, passwordHash: await hashPassword(password) })
+  await writeConfig(dir, { port, host, passwordHash: await hashPassword(password) })
   console.log(`\nConfiguration enregistrée dans ${configPath(dir)} (mot de passe haché).`)
   console.log(`Démarrer :  kotari-server start "${dir}"`)
 }
@@ -162,13 +168,14 @@ async function cmdStart(dir: string) {
   }
   const c = await readConfig(dir)
   const info = await new ProjectStore(dir).readInfo()
-  const srv = await startServer({ dir, port: c.port, passwordHash: c.passwordHash })
+  const srv = await startServer({ dir, port: c.port, host: c.host, passwordHash: c.passwordHash })
 
-  console.log(`\nKotari Serveur — projet « ${info.name} »`)
+  console.log(`\nKotari Serveur ${VERSION} — projet « ${info.name} »`)
   console.log(`Dossier : ${path.resolve(dir)}`)
   console.log(`Port    : ${srv.port}`)
   const ips = lanAddresses()
-  if (ips.length) console.log(`Adresse à saisir dans Kotari : ${ips.join('  ou  ')}`)
+  if (c.host === '127.0.0.1' || c.host === 'localhost') console.log('Écoute en local uniquement (derrière un proxy HTTPS comme Caddy).')
+  else if (ips.length) console.log(`Adresse à saisir dans Kotari : ${ips.join('  ou  ')}`)
   console.log('Ctrl+C pour arrêter.\n')
 
   let stopping = false
@@ -187,6 +194,10 @@ async function cmdStart(dir: string) {
 async function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2))
   const [cmd, dirArg] = positional
+  if (cmd === 'version' || flags.version) {
+    console.log(VERSION)
+    return
+  }
   if (!cmd || !dirArg) usage()
   const dir = path.resolve(dirArg)
   if (cmd === 'init') await cmdInit(dir, flags)

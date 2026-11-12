@@ -27,10 +27,22 @@ node dist-server/kotari-server/kotari-server.mjs start ./test-serveur
 
 Puis dans Kotari : « Se connecter à un serveur », adresse `127.0.0.1`, port `4321`.
 
+## Publier une version
+
+1. Changer `version` dans `package.json` (ex. `0.3.1`) et committer.
+2. `git tag v0.3.1 && git push && git push origin v0.3.1`
+3. GitHub Actions construit et publie la release : installateur Windows, `latest.yml`
+   (mise à jour automatique des apps installées), `kotari-server.zip`, `install-serveur.sh`.
+
+Les Kotari installés trouvent la nouvelle version au démarrage, la téléchargent et
+proposent « Redémarrer » en bas de la barre latérale.
+
+Serveur sur un VPS : voir `deploy/install-serveur.sh` (relancer le script = mise à jour).
+
 ## Builds
 
 ```sh
-npm run dist           # installateur Windows : release/Kotari-Setup-<version>.exe
+npm run dist           # installateur Windows (local, sans publier) : release/Kotari-Setup-<version>.exe
 npm run build:server   # dist-server/kotari-server/ (à copier sur la machine serveur)
 ```
 
@@ -70,7 +82,7 @@ Le même dossier s'ouvre en local ou s'héberge sur le serveur.
 - Un type utilisé par au moins une fiche ne peut pas être supprimé. Changer le genre d'un champ
   convertit les valeurs quand c'est possible (avec avertissement) ; retirer un champ abandonne ses valeurs.
 - Le mot de passe du serveur n'est retenu que si on coche la case, chiffré avec le compte Windows.
-- Connexion WebSocket non chiffrée : réseau local ou tunnel (Tailscale) uniquement.
+- Sur Internet : HTTPS via Caddy (case « Connexion sécurisée »). Sans HTTPS : réseau local ou Tailscale uniquement.
 
 ## Nouveautés 0.2
 

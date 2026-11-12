@@ -1,10 +1,10 @@
 {
   "name": "kotari",
   "productName": "Kotari",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fiches imbriquées en local et édition à plusieurs en temps réel",
   "author": "Nicolas",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "main": "./out/main/index.js",
   "type": "commonjs",
@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "server": "node scripts/build-server.mjs && node dist-server/kotari-server/kotari-server.mjs",
     "build:server": "node scripts/build-server.mjs",
-    "dist": "electron-vite build && electron-builder --win nsis",
+    "dist": "electron-vite build && electron-builder --win nsis --publish never",
     "test": "node scripts/run-tests.mjs"
   },
   "devDependencies": {
@@ -43,5 +43,13 @@
     "ws": "^8.22.2",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.33"
-  }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zomboglace/Kotari.git"
+  },
+  "homepage": "https://github.com/Zomboglace/Kotari"
 }

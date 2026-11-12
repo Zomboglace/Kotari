@@ -1,0 +1,45 @@
+# Publie une release quand on pousse un tag vX.Y.Z :
+#   installateur Windows + latest.yml (mise à jour automatique), paquet kotari-server, script d'installation.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Vérifier que le tag correspond à la version
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "Le tag $env:GITHUB_REF_NAME ne correspond pas à la version v$v de package.json" }
+
+      - name: Installateur Windows
+        run: npx electron-vite build && npx electron-builder --win nsis --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Paquet serveur
+        shell: pwsh
+        run: |
+          node scripts/build-server.mjs
+          Compress-Archive -Path dist-server/kotari-server -DestinationPath kotari-server.zip -Force
+          gh release upload $env:GITHUB_REF_NAME kotari-server.zip deploy/install-serveur.sh --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

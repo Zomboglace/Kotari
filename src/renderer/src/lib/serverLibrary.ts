@@ -8,7 +8,14 @@ import { TREE_ROOM, docRoom, fromBase64, toBase64 } from '@shared/protocol'
 import type { SearchHit } from '@shared/search'
 import { Emitter, type Library, type LibraryState, type OpenedDoc } from './library'
 
+/** Adresse affichée : le port est omis quand c'est celui par défaut. */
+export function serverLabel(host: string, port: number, secure: boolean): string {
+  return (secure && port === 443) || (!secure && port === 80) ? host : `${host}:${port}`
+}
+
 export interface ConnectOptions {
+  /** wss:// (via HTTPS, ex. derrière Caddy) plutôt que ws://. */
+  secure?: boolean
   host: string
   port: number
   password: string
@@ -56,13 +63,13 @@ export class ServerLibrary implements Library {
   onLost: (reason: string) => void = () => {}
 
   private constructor(opts: ConnectOptions) {
-    this.label = `${opts.host}:${opts.port}`
+    this.label = serverLabel(opts.host, opts.port, !!opts.secure)
     this.user = { name: opts.name, color: colorFor(opts.name) }
     const auth: AuthToken = { password: opts.password, name: opts.name }
     this.token = JSON.stringify(auth)
     this.socket = new HocuspocusProviderWebsocket({
       // Coupure réseau : reconnexion automatique, Yjs fusionne au retour.
-      url: `ws://${opts.host}:${opts.port}`
+      url: `${opts.secure ? 'wss' : 'ws'}://${opts.host}:${opts.port}`
     })
     this.tree = new HocuspocusProvider({
       websocketProvider: this.socket,

@@ -25,7 +25,8 @@ interface Ctx {
   name: string
 }
 
-const MAX_PAYLOAD = 64 * 1024 * 1024
+// Une image de 15 Mo fait ~20 Mo en base64.
+const MAX_PAYLOAD = 24 * 1024 * 1024
 
 export function timestamp(): string {
   return new Date().toLocaleTimeString('fr-FR')

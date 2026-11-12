@@ -13,6 +13,7 @@ export interface SavedServerInfo {
   id: string
   host: string
   port: number
+  secure?: boolean
   name: string
   hasPassword: boolean
   lastUsed: number
@@ -37,9 +38,14 @@ declare global {
       missingImages(hashes: string[]): Promise<string[]>
       search(query: string, ids?: string[]): Promise<SearchHit[]>
       listServers(): Promise<SavedServerInfo[]>
-      rememberServer(entry: { host: string; port: number; name: string }, password: string | null | undefined): Promise<void>
+      rememberServer(entry: { host: string; port: number; secure?: boolean; name: string }, password: string | null | undefined): Promise<void>
       serverPassword(id: string): Promise<string | null>
       forgetServer(id: string): Promise<void>
+      appVersion(): Promise<string>
+      updateStatus(): Promise<string | null>
+      checkUpdate(): Promise<'dev' | 'available' | 'none' | 'error'>
+      installUpdate(): Promise<void>
+      onUpdateReady(cb: (version: string) => void): void
       onFlushRequest(cb: () => Promise<void>): void
     }
   }

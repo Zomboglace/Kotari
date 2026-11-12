@@ -1,7 +1,7 @@
 // Construit kotari-server en un seul fichier JS (dépendances incluses),
 // plus les fichiers d'accompagnement, dans dist-server/kotari-server/.
 import { build } from 'esbuild'
-import { cpSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +20,7 @@ await build({
   format: 'esm',
   // Certaines dépendances utilisent require() : on le fournit en ESM.
   banner: { js: "import { createRequire as __kotariCreateRequire } from 'node:module'; const require = __kotariCreateRequire(import.meta.url);" },
+  define: { __KOTARI_VERSION__: JSON.stringify(JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version) },
   legalComments: 'none',
   logLevel: 'warning',
   // Modules natifs optionnels de ws : absents, ws utilise sa version JS.

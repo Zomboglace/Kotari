@@ -24,6 +24,13 @@ const api = {
     ipcRenderer.invoke('servers:remember', entry, password),
   serverPassword: (id: string) => ipcRenderer.invoke('servers:password', id),
   forgetServer: (id: string) => ipcRenderer.invoke('servers:forget', id),
+  appVersion: () => ipcRenderer.invoke('app:version'),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateReady: (cb: (version: string) => void) => {
+    ipcRenderer.on('update:ready', (_e, v: string) => cb(v))
+  },
   onFlushRequest: (cb: () => Promise<void>) => {
     ipcRenderer.on('app:flush', async () => {
       try {

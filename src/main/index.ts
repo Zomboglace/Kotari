@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { ProjectStore } from '@shared/fsproject'
@@ -46,6 +47,7 @@ interface SavedServer {
   id: string
   host: string
   port: number
+  secure?: boolean
   name: string
   password?: string
   lastUsed: number
@@ -78,13 +80,14 @@ function registerIpc() {
     const e = entry as Partial<SavedServer>
     if (typeof e?.host !== 'string' || typeof e.port !== 'number' || typeof e.name !== 'string') throw new Error('Serveur invalide.')
     const list = await readServers()
-    const id = `${e.host}:${e.port}`
+    const secure = e.secure === true
+    const id = `${secure ? 'wss' : 'ws'}://${e.host}:${e.port}`
     const prev = list.find((x) => x.id === id)
     let enc = prev?.password
     if (typeof password === 'string') {
       enc = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(password).toString('base64') : undefined
     } else if (password === null) enc = undefined
-    const next: SavedServer = { id, host: e.host, port: e.port, name: e.name, password: enc, lastUsed: Date.now() }
+    const next: SavedServer = { id, host: e.host, port: e.port, secure, name: e.name, password: enc, lastUsed: Date.now() }
     await writeServers([next, ...list.filter((x) => x.id !== id)].slice(0, 10))
   })
 
@@ -207,6 +210,43 @@ function registerIpc() {
   })
 }
 
+// ---- Mises à jour automatiques (GitHub Releases) ----
+
+let updateReady: string | null = null
+let installing = false
+
+function setupUpdater() {
+  ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('update:status', () => updateReady)
+  ipcMain.handle('update:install', () => {
+    if (!updateReady) return
+    installing = true
+    autoUpdater.quitAndInstall(false, true)
+  })
+  ipcMain.handle('update:check', async () => {
+    if (!app.isPackaged) return 'dev'
+    try {
+      const r = await autoUpdater.checkForUpdates()
+      return r?.isUpdateAvailable ? 'available' : 'none'
+    } catch (e) {
+      return 'error'
+    }
+  })
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = info.version
+    win?.webContents.send('update:ready', info.version)
+  })
+  autoUpdater.on('error', () => {
+    /* hors ligne ou GitHub injoignable : on réessaiera au prochain lancement */
+  })
+  void autoUpdater.checkForUpdates().catch(() => {})
+  // Puis toutes les 4 heures si l'app reste ouverte.
+  setInterval(() => void autoUpdater.checkForUpdates().catch(() => {}), 4 * 3600 * 1000)
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -248,7 +288,7 @@ function createWindow() {
   // Avant de fermer, le rendu écrit les fiches en attente de sauvegarde.
   let flushed = false
   win.on('close', (e) => {
-    if (flushed || !win) return
+    if (flushed || installing || !win) return
     e.preventDefault()
     const done = () => {
       flushed = true
@@ -275,6 +315,7 @@ function createWindow() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   registerIpc()
+  setupUpdater()
   createWindow()
 })
 

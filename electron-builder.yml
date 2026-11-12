@@ -19,4 +19,8 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Kotari
   artifactName: Kotari-Setup-${version}.exe
-publish: null
+publish:
+  provider: github
+  owner: Zomboglace
+  repo: Kotari
+  releaseType: release

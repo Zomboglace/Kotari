@@ -16,6 +16,7 @@ await build({
   alias: { '@shared': resolve(root, 'src/shared') },
   banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   external: ['bufferutil', 'utf-8-validate'],
+  define: { __KOTARI_VERSION__: '"test"' },
   logLevel: 'warning'
 })
 execFileSync(process.execPath, [outfile], { stdio: 'inherit' })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TypeDef } from '@shared/model'
 import { loadPref, savePref } from '../lib/hooks'
 import type { ConnectOptions } from '../lib/serverLibrary'
@@ -147,12 +147,14 @@ export function NewDocModal({
 interface SavedConnection {
   host: string
   port: string
+  secure?: boolean
   name: string
 }
 
 export interface ConnectInitial {
   host: string
   port: number
+  secure?: boolean
   name: string
   error?: string
 }
@@ -169,6 +171,22 @@ export function ConnectModal({
   const saved = loadPref<SavedConnection>('kotari.connection', { host: '', port: '4321', name: '' })
   const [host, setHost] = useState(initial?.host ?? saved.host)
   const [port, setPort] = useState(initial ? String(initial.port) : saved.port)
+  const [secure, setSecure] = useState(initial?.secure ?? saved.secure ?? false)
+  const portTouched = useRef(false)
+
+  // Un nom de domaine passe par HTTPS (port 443) ; une adresse IP du réseau local, non.
+  const onHost = (v: string) => {
+    setHost(v)
+    const h = v.trim().replace(/^(https|wss):\/\//, '')
+    const isDomain = /[a-z]/i.test(h) && h.includes('.') && !/^localhost$/i.test(h)
+    if (/^(https|wss):\/\//.test(v.trim()) || isDomain) {
+      setSecure(true)
+      if (!portTouched.current) setPort('443')
+    } else if (/^[\d.]+$/.test(h) || /^localhost$/i.test(h)) {
+      setSecure(false)
+      if (!portTouched.current && port === '443') setPort('4321')
+    }
+  }
   const [password, setPassword] = useState('')
   const [name, setName] = useState(initial?.name ?? saved.name)
   const [rememberPw, setRememberPw] = useState(() => loadPref('kotari.rememberPassword', true))
@@ -178,16 +196,16 @@ export function ConnectModal({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const p = Number(port)
-    const h = host.trim().replace(/^wss?:\/\//, '').replace(/\/.*$/, '')
+    const h = host.trim().replace(/^(wss?|https?):\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '')
     if (!h) return setError("Indique l'adresse du serveur.")
     if (!Number.isInteger(p) || p < 1 || p > 65535) return setError('Port invalide.')
     if (!name.trim()) return setError('Indique ton prénom (affiché à côté de ton curseur).')
     setBusy(true)
     setError(null)
-    savePref('kotari.connection', { host: h, port: String(p), name: name.trim() })
+    savePref('kotari.connection', { host: h, port: String(p), secure, name: name.trim() })
     savePref('kotari.rememberPassword', rememberPw)
     try {
-      await onConnect({ host: h, port: p, password, name: name.trim() }, rememberPw)
+      await onConnect({ host: h, port: p, secure, password, name: name.trim() }, rememberPw)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setBusy(false)
@@ -200,11 +218,25 @@ export function ConnectModal({
         <div className="form-grid">
           <label className="form-row">
             <span>Adresse</span>
-            <input className="input" autoFocus={!host} value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.20" />
+            <input
+              className="input"
+              autoFocus={!host}
+              value={host}
+              onChange={(e) => onHost(e.target.value)}
+              placeholder="kotari.mondomaine.fr ou 192.168.1.20"
+            />
           </label>
           <label className="form-row port">
             <span>Port</span>
-            <input className="input" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
+            <input
+              className="input"
+              value={port}
+              onChange={(e) => {
+                portTouched.current = true
+                setPort(e.target.value)
+              }}
+              inputMode="numeric"
+            />
           </label>
         </div>
         <label className="form-row">
@@ -214,6 +246,10 @@ export function ConnectModal({
         <label className="form-row">
           <span>Ton prénom</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Affiché à côté de ton curseur" />
+        </label>
+        <label className="check small">
+          <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)} />
+          Connexion sécurisée (HTTPS) : pour un serveur sur Internet avec un nom de domaine
         </label>
         <label className="check small">
           <input type="checkbox" checked={rememberPw} onChange={(e) => setRememberPw(e.target.checked)} />
@@ -230,6 +266,39 @@ export function ConnectModal({
         </div>
       </form>
     </Modal>
+  )
+}
+
+function VersionSection() {
+  const [version, setVersion] = useState('')
+  const [status, setStatus] = useState<string | null>(null)
+  useEffect(() => {
+    void window.kotari.appVersion().then(setVersion)
+  }, [])
+  const check = async () => {
+    setStatus('Recherche…')
+    const r = await window.kotari.checkUpdate()
+    setStatus(
+      r === 'available'
+        ? 'Une nouvelle version se télécharge. Un bouton « Redémarrer » apparaîtra en bas à gauche.'
+        : r === 'none'
+          ? 'Tu as la dernière version.'
+          : r === 'dev'
+            ? 'Mises à jour désactivées en mode développement.'
+            : 'Impossible de joindre GitHub pour le moment.'
+    )
+  }
+  return (
+    <>
+      <h3 className="settings-h">Version</h3>
+      <div className="version-row">
+        <span>Kotari {version}</span>
+        <button className="btn small" onClick={check}>
+          Rechercher une mise à jour
+        </button>
+        {status && <span className="muted small">{status}</span>}
+      </div>
+    </>
   )
 }
 
@@ -299,6 +368,8 @@ export function SettingsModal({
           <tr><td>Ctrl+Z / Ctrl+Y</td><td>Annuler / rétablir</td></tr>
         </tbody>
       </table>
+
+      <VersionSection />
 
       <h3 className="settings-h">Raccourcis</h3>
       <table className="md-help">
