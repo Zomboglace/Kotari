@@ -45,9 +45,17 @@ say "kotari-server (dernière version publiée)"
 id kotari >/dev/null 2>&1 || useradd --system --home "$DATA_ROOT" --shell /usr/sbin/nologin kotari
 mkdir -p "$APP_DIR" "$DATA_ROOT"
 tmp=$(mktemp -d)
-curl -fsSL "$RELEASE_URL" -o "$tmp/kotari-server.zip"
-unzip -q -o "$tmp/kotari-server.zip" -d "$tmp"
-cp -f "$tmp"/kotari-server/* "$APP_DIR"/
+if curl -fsSL "$RELEASE_URL" -o "$tmp/kotari-server.zip"; then
+  unzip -q -o "$tmp/kotari-server.zip" -d "$tmp"
+  cp -f "$tmp"/kotari-server/* "$APP_DIR"/
+else
+  # Pas encore de release publiée : on construit kotari-server depuis le code source.
+  echo "Aucune release trouvée : construction depuis le code source (2 à 3 minutes)…"
+  command -v git >/dev/null || apt-get install -y git
+  git clone --depth 1 https://github.com/Zomboglace/Kotari.git "$tmp/src"
+  (cd "$tmp/src" && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund && node scripts/build-server.mjs)
+  cp -f "$tmp"/src/dist-server/kotari-server/* "$APP_DIR"/
+fi
 rm -rf "$tmp"
 echo "Version : $(node "$APP_DIR/kotari-server.mjs" version)"
 
