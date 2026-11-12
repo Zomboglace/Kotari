@@ -1632,3 +1632,46 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
 }
+
+/* Séparation local / serveur */
+.libs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.libs > .lib-section {
+  min-height: 70px;
+}
+.lib-split {
+  flex: none;
+  height: 7px;
+  margin: -3px 0;
+  position: relative;
+  z-index: 3;
+  cursor: ns-resize;
+}
+.lib-split::after {
+  content: '';
+  position: absolute;
+  left: 40%;
+  right: 40%;
+  top: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.lib-split:hover::after,
+body.resizing-v .lib-split::after {
+  opacity: 1;
+  background: var(--accent);
+}
+body.resizing-v {
+  cursor: ns-resize;
+  user-select: none;
+}
+.editor-actions {
+  flex-wrap: wrap;
+}

@@ -78,6 +78,26 @@ export function App() {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [theme, setTheme] = useState<ThemeSettings>(loadTheme)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  // Séparation réglable entre l'arbre local et l'arbre serveur.
+  const [split, setSplit] = useState<number>(() => loadPref('kotari.split', 0.5))
+  const libsRef = useRef<HTMLDivElement>(null)
+  const startSplit = (e: React.PointerEvent) => {
+    const box = libsRef.current?.getBoundingClientRect()
+    if (!box) return
+    e.preventDefault()
+    const ratio = (y: number) => Math.min(0.88, Math.max(0.12, (y - box.top) / box.height))
+    let last = split
+    const move = (ev: PointerEvent) => setSplit((last = ratio(ev.clientY)))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing-v')
+      savePref('kotari.split', last)
+    }
+    document.body.classList.add('resizing-v')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   useEffect(() => {
     void window.kotari.updateStatus().then((v) => v && setUpdateVersion(v))
     window.kotari.onUpdateReady(setUpdateVersion)
@@ -394,7 +414,8 @@ export function App() {
             />
           )}
 
-          <div className="lib-section">
+          <div className="libs" ref={libsRef}>
+          <div className="lib-section" style={{ flex: `${split} 1 0` }}>
             <div className="lib-head">
               <span className="lib-name" title={local?.path}>
                 {local ? local.label : 'Local'}
@@ -444,7 +465,16 @@ export function App() {
             )}
           </div>
 
-          <div className="lib-section">
+          <div
+            className="lib-split"
+            title="Glisser pour redimensionner · double-clic : moitié-moitié"
+            onPointerDown={startSplit}
+            onDoubleClick={() => {
+              setSplit(0.5)
+              savePref('kotari.split', 0.5)
+            }}
+          />
+          <div className="lib-section" style={{ flex: `${1 - split} 1 0` }}>
             <div className="lib-head">
               <span className="lib-name">
                 {server ? (
@@ -523,6 +553,7 @@ export function App() {
                 </button>
               </div>
             )}
+          </div>
           </div>
           {updateVersion && (
             <div className="update-banner">

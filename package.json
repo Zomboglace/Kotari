@@ -1,7 +1,7 @@
 {
   "name": "kotari",
   "productName": "Kotari",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Fiches imbriquées en local et édition à plusieurs en temps réel",
   "author": "Nicolas",
   "license": "MIT",

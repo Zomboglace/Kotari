@@ -146,6 +146,36 @@ async function main() {
   assert.equal(plan2.newTypes[0].name, 'Personnage (2)')
   ok('type en conflit dupliqué en « Personnage (2) »')
 
+  // Régression : même fiche ouverte deux fois (fiche + carte) et fermeture / réouverture rapides.
+  {
+    const note = TEMPLATES[0]
+    const nid = newId()
+    await a.createDoc({ id: nid, title: 'N', typeId: note.id, parentId: null, order: 9 }, initialContent(note))
+    const frag = (o: { ydoc: Y.Doc }) => o.ydoc.getMap('fields').get('contenu') as Y.XmlFragment
+    const add = (o: { ydoc: Y.Doc }, t: string) => {
+      const p = new Y.XmlElement('paragraph')
+      p.insert(0, [new Y.XmlText(t)])
+      frag(o).push([p])
+    }
+    const x1 = await a.openDoc(nid)
+    const x2 = await a.openDoc(nid)
+    x1.close()
+    add(x2, 'double')
+    let od = x2
+    for (let i = 0; i < 6; i++) {
+      od.close()
+      od = await a.openDoc(nid)
+      add(od, 'tour' + i)
+    }
+    const ob = await b.openDoc(nid)
+    await until(() => ['double', 'tour0', 'tour5'].every((t) => frag(ob).toString().includes(t)), 'saisies après réouvertures')
+    od.close()
+    ob.close()
+    await a.deleteDocs([nid])
+    await until(() => !b.getState().docs.some((d) => d.id === nid), 'nettoyage')
+  }
+  ok('fiche ouverte deux fois puis rouverte : aucune saisie perdue')
+
   // Recherche côté serveur (titre + texte riche, sans accents)
   const hits = await b.search('rodeur')
   assert.ok(hits.some((h) => h.docId === pid && h.path === 'histoire'))

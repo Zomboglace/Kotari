@@ -39,6 +39,7 @@ export function colorFor(name: string): string {
 }
 
 const REQUEST_TIMEOUT = 60_000
+const KEEP_OPEN_MS = 30_000
 
 /**
  * Bibliothèque hébergée par kotari-server.
@@ -208,41 +209,85 @@ export class ServerLibrary implements Library {
     this.treeDoc.getMap<TypeDef>('types').delete(id)
   }
 
+  /**
+   * Un seul fournisseur par document, partagé (fiche + carte, fermeture puis réouverture rapide).
+   * Deux fournisseurs du même document sur une même connexion, ou un document rouvert pendant que
+   * le serveur traite sa fermeture, se désynchronisent : la saisie n'atteint plus le serveur.
+   */
+  private docs = new Map<
+    string,
+    { ydoc: Y.Doc; provider: HocuspocusProvider; refs: number; ready: Promise<void>; release: ReturnType<typeof setTimeout> | null }
+  >()
+  private closedAt = new Map<string, number>()
+
   async openDoc(id: string): Promise<OpenedDoc> {
-    const ydoc = new Y.Doc()
-    const provider = new HocuspocusProvider({
-      websocketProvider: this.socket,
-      name: docRoom(id),
-      document: ydoc,
-      token: this.token
-    })
-    provider.setAwarenessField('user', this.user)
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Le document n'a pas pu être chargé.")), 15000)
-      provider.on('synced', () => {
-        clearTimeout(timer)
-        resolve()
+    let entry = this.docs.get(id)
+    if (!entry) {
+      // Fermé il y a un instant : laisse le serveur finir avant de rouvrir.
+      const since = Date.now() - (this.closedAt.get(id) ?? 0)
+      if (since < 1500) await new Promise((r) => setTimeout(r, 1500 - since))
+      entry = this.docs.get(id)
+    }
+    if (!entry) {
+      const ydoc = new Y.Doc()
+      const provider = new HocuspocusProvider({
+        websocketProvider: this.socket,
+        name: docRoom(id),
+        document: ydoc,
+        token: this.token
       })
-      provider.on('authenticationFailed', () => {
-        clearTimeout(timer)
-        reject(new Error('Accès refusé à ce document.'))
+      provider.setAwarenessField('user', this.user)
+      const ready = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Le document n'a pas pu être chargé.")), 15000)
+        provider.on('synced', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+        provider.on('authenticationFailed', () => {
+          clearTimeout(timer)
+          reject(new Error('Accès refusé à ce document.'))
+        })
+        provider.attach()
       })
-      provider.attach()
-    }).catch((e) => {
-      provider.destroy()
-      ydoc.destroy()
-      throw e
-    })
+      const e = { ydoc, provider, refs: 0, ready, release: null }
+      this.docs.set(id, e)
+      entry = e
+      ready.catch(() => {
+        if (this.docs.get(id) === e) this.docs.delete(id)
+        provider.destroy()
+        ydoc.destroy()
+      })
+    }
+    const current = entry
+    current.refs++
+    if (current.release) {
+      clearTimeout(current.release)
+      current.release = null
+    }
+    try {
+      await current.ready
+    } catch (err) {
+      current.refs--
+      throw err
+    }
     let closed = false
     return {
-      ydoc,
-      awareness: provider.awareness,
-      provider,
+      ydoc: current.ydoc,
+      awareness: current.provider.awareness,
+      provider: current.provider,
       close: () => {
         if (closed) return
         closed = true
-        provider.destroy()
-        ydoc.destroy()
+        current.refs--
+        if (current.refs > 0) return
+        // Garde le document ouvert un moment : revenir sur la fiche ne le recharge pas.
+        current.release = setTimeout(() => {
+          if (current.refs > 0 || this.docs.get(id) !== current) return
+          this.docs.delete(id)
+          this.closedAt.set(id, Date.now())
+          current.provider.destroy()
+          current.ydoc.destroy()
+        }, KEEP_OPEN_MS)
       }
     }
   }
@@ -287,6 +332,12 @@ export class ServerLibrary implements Library {
     this.destroyed = true
     for (const p of this.pending.values()) p.reject(new Error('Déconnecté.'))
     this.pending.clear()
+    for (const e of this.docs.values()) {
+      if (e.release) clearTimeout(e.release)
+      e.provider.destroy()
+      e.ydoc.destroy()
+    }
+    this.docs.clear()
     this.tree.destroy()
     this.socket.destroy()
     this.treeDoc.destroy()

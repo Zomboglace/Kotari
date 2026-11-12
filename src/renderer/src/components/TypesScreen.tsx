@@ -64,7 +64,7 @@ export function TypesScreen({ libs, initial }: Props) {
           </div>
         )}
       </div>
-      <TypesEditor key={kind} lib={lib} />
+      <TypesEditor key={kind} lib={lib} other={libs[kind === 'local' ? 'server' : 'local'] ?? null} />
     </div>
   )
 }
@@ -93,7 +93,7 @@ function hasEmptyList(fields: Field[]): boolean {
   return fields.some((f) => f.kind === 'list' && (!f.subfields?.length || hasEmptyList(f.subfields)))
 }
 
-function TypesEditor({ lib }: { lib: Library }) {
+function TypesEditor({ lib, other }: { lib: Library; other: Library | null }) {
   const { types, docs } = useLibraryState(lib)
   const ui = useUi()
   const mem = useRef(recall(lib))
@@ -204,6 +204,51 @@ function TypesEditor({ lib }: { lib: Library }) {
     }
   }
 
+  /** Nouveau type à partir de celui affiché (modifications en cours comprises). */
+  const duplicate = () => {
+    if (!draft) return
+    const copy: TypeDef = {
+      ...structuredClone(draft),
+      id: newId(),
+      name: `${draft.name.trim() || 'Sans nom'} (copie)`,
+      order: maxOrder + 1
+    }
+    setIsNew(true)
+    setSelectedId(copy.id)
+    setDraft(copy)
+    setBase(null)
+  }
+
+  const otherName = other?.kind === 'server' ? 'le serveur' : 'le projet local'
+
+  /** Envoie le type enregistré vers l'autre bibliothèque (même identifiant). */
+  const copyToOther = async () => {
+    if (!stored || !other) return
+    const theirs = other.getState().types.find((t) => t.id === stored.id)
+    if (theirs) {
+      const same = JSON.stringify({ ...stored, order: 0 }) === JSON.stringify({ ...theirs, order: 0 })
+      if (same) return ui.toast(`« ${stored.name} » est déjà identique sur ${otherName}.`)
+      const used = other.getState().docs.filter((d) => d.typeId === stored.id).length
+      const ok = await ui.confirm({
+        title: `Remplacer « ${theirs.name} » sur ${otherName} ?`,
+        message:
+          (used
+            ? `${used} fiche${used > 1 ? 's' : ''} l'utilise${used > 1 ? 'nt' : ''} là-bas : leurs valeurs seront adaptées (converties quand c'est possible). `
+            : '') + 'Pour garder les deux versions, utilise plutôt « Dupliquer » puis copie le duplicata.',
+        confirmLabel: 'Remplacer',
+        danger: used > 0
+      })
+      if (!ok) return
+    }
+    try {
+      const order = theirs?.order ?? other.getState().types.reduce((m, t) => Math.max(m, t.order), 0) + 1
+      await other.saveType({ ...structuredClone(stored), order })
+      ui.toast(`« ${stored.name} » copié sur ${otherName}.`)
+    } catch (e) {
+      ui.toast(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
+
   const remove = async () => {
     if (!stored || usage > 0) return
     if (
@@ -298,6 +343,19 @@ function TypesEditor({ lib }: { lib: Library }) {
                 </span>
               )}
               <span className="spacer" />
+              <button className="btn ghost" title="Créer un nouveau type à partir de celui-ci" onClick={duplicate}>
+                Dupliquer
+              </button>
+              {other && !isNew && (
+                <button
+                  className="btn ghost"
+                  disabled={dirty}
+                  title={dirty ? "Enregistre d'abord tes modifications" : `Copier ce type sur ${otherName}`}
+                  onClick={() => void copyToOther()}
+                >
+                  {other.kind === 'server' ? 'Copier vers le serveur' : 'Copier en local'}
+                </button>
+              )}
               {dirty && (
                 <button className="btn ghost" onClick={() => (isNew ? load(types[0]?.id ?? null) : load(selectedId))}>
                   Annuler
