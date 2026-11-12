@@ -61,21 +61,50 @@ function parseArgs(argv: string[]) {
 }
 
 function ask(question: string, hidden = false): Promise<string> {
+  if (hidden && process.stdin.isTTY) return askHidden(question)
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true })
-    if (hidden) {
-      const rlAny = rl as unknown as { _writeToOutput: (s: string) => void; output: NodeJS.WriteStream }
-      rlAny._writeToOutput = (s: string) => {
-        if (s.includes(question)) rlAny.output.write(s)
-        else if (s === '\r\n' || s === '\n') rlAny.output.write(s)
-        else rlAny.output.write('*'.repeat(s.length))
-      }
-    }
     rl.question(question, (answer) => {
       rl.close()
-      if (hidden) process.stdout.write('\n')
       resolve(answer)
     })
+  })
+}
+
+/** Saisie masquée (une étoile par caractère), en lisant le clavier directement. */
+function askHidden(question: string): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin
+    process.stdout.write(question)
+    stdin.setRawMode(true)
+    stdin.setEncoding('utf8')
+    stdin.resume()
+    let value = ''
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n' || ch === '\u0004') {
+          stdin.setRawMode(false)
+          stdin.pause()
+          stdin.off('data', onData)
+          process.stdout.write('\n')
+          resolve(value)
+          return
+        } else if (ch === '\u0003') {
+          stdin.setRawMode(false)
+          process.stdout.write('\n')
+          process.exit(130)
+        } else if (ch === '\u007f' || ch === '\b') {
+          if (value.length) {
+            value = value.slice(0, -1)
+            process.stdout.write('\b \b')
+          }
+        } else if (ch >= ' ') {
+          value += ch
+          process.stdout.write('*')
+        }
+      }
+    }
+    stdin.on('data', onData)
   })
 }
 

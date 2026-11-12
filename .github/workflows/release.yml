@@ -31,15 +31,27 @@ jobs:
           if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "Le tag $env:GITHUB_REF_NAME ne correspond pas à la version v$v de package.json" }
 
       - name: Installateur Windows
-        run: npx electron-vite build && npx electron-builder --win nsis --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --win nsis --publish never
 
       - name: Paquet serveur
         shell: pwsh
         run: |
           node scripts/build-server.mjs
           Compress-Archive -Path dist-server/kotari-server -DestinationPath kotari-server.zip -Force
-          gh release upload $env:GITHUB_REF_NAME kotari-server.zip deploy/install-serveur.sh --clobber
+
+      - name: Publier la release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $files = @('release/Kotari-Setup.exe', 'release/Kotari-Setup.exe.blockmap', 'release/latest.yml', 'kotari-server.zip', 'deploy/install-serveur.sh')
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "Kotari $($tag.Substring(1))" --generate-notes --latest
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Output "Fichiers de la release :"
+          gh release view $tag --json assets --jq '.assets[].name'
