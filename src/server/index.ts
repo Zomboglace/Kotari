@@ -49,12 +49,12 @@ function parseArgs(argv: string[]) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a.startsWith('--')) {
-      const key = a.slice(2)
+      const option = a.slice(2)
       const next = argv[i + 1]
       if (next !== undefined && !next.startsWith('--')) {
-        flags[key] = next
+        flags[option] = next
         i++
-      } else flags[key] = true
+      } else flags[option] = true
     } else positional.push(a)
   }
   return { positional, flags }
